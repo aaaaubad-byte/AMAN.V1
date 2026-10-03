@@ -1,304 +1,1087 @@
-AMAN | أمان التوجيه التنفيذي الأول — إصلاح قاعدة البيانات والـ Backend بالكامل 
+AMAN-1
 
-أنت تعمل على مستودع: aaaaubad-byte/AMAN.V1
+التوجيه التنفيذي الأول — إصلاح Database + Backend
 
-يوجد في المشروع تقرير تدقيق جنائي كامل تم إعداده مسبقًا خارج Manus، لذلك ممنوع إعادة تنفيذ تدقيق شامل من الصفر لإهدار النقاط.
+0. طبيعة هذا الملف
 
-المطلوب الآن هو تنفيذ الإصلاحات الفعلية في قاعدة البيانات والـ Backend فقط، اعتمادًا على:
+هذا الملف هو التوجيه التنفيذي الأول فقط لمشروع:
 
-AMAN_EXECUTION_REFERENCE_REPOSITORY_FINAL_CLEAN.md الملفات الحالية داخل database/ تقرير التدقيق: AMAN_FINAL_FORENSIC_AUDIT_REPORT.md قاعدة أساسية غير قابلة للتفاوض 
+AMAN | أمان — أمان حماية وضمان
 
-إذا وجدت أثناء التنفيذ أي نقطة تحتاج إلى قرار مني، خصوصًا إذا كانت:
+سيتم تنفيذ هذا التوجيه داخل مستودع العمل الذي تم ربطك به في هذه الجلسة.
 
-قرارًا تجاريًا. تغييرًا في سلوك النظام. اختيارًا بين تصميمين صحيحين. تعارضًا بين المرجع والمخطط الحالي. قرارًا غير محسوم في التقرير. تغييرًا قد يؤثر على تطبيق العميل أو الإدارة. 
+قاعدة مهمة جدًا
 
-توقف فورًا عند هذه النقطة ولا تخمّن ولا تختَر من نفسك.
+لا تفترض اسم المستودع من هذا الملف، ولا تبحث عن مستودع آخر.
 
-أرسل لي:
+اعمل فقط داخل المستودع الحالي المرتبط بهذه الجلسة.
 
-ما المشكلة تحديدًا. الخيارات الممكنة. أثر كل خيار. ما الذي يمنعك من الاستمرار. 
+هذا الملف اسمه:
 
-ثم انتظر إجابتي.
+"AMAN-1"
 
-أما المشاكل التي لها حل واضح ومحدد في المرجع أو تقرير التدقيق، فنفذها مباشرة دون سؤالي.
+وهو اسم ملف التوجيه وليس اسم المستودع.
 
-الهدف 
+---
 
-الوصول إلى Backend/Database production-ready ومتطابق مع المرجع، بحيث يصبح العقد النهائي جاهزًا لتطبيقَي:
+1. المطلوب منك
 
-Customer APK Admin APK 
+تنفيذ إصلاحات قاعدة البيانات والـ Backend فقط وفق المرجع النهائي والتدقيق السابق.
 
-ويجب ألا تعتمد التطبيقات لاحقًا على أي منطق ناقص أو مؤقت.
+لا تنتقل في هذه المرحلة إلى إصلاح واجهات تطبيق العميل أو تطبيق الإدارة.
 
-المرحلة 1 — توحيد العقد النهائي 
+الهدف هو جعل Backend/Database جاهزًا فعليًا بحيث تستطيع المرحلة التالية بناء التطبيقين فوق عقد Backend ثابت وصحيح.
 
-راجع الموجود حاليًا في:
+---
 
-database/migrations/001_initial_schema.sql database/migrations/002_admin_contracts.sql
+2. مصادر الحقيقة
 
-وأنشئ/حدّث سلسلة SQL النهائية بطريقة منظمة.
+قبل التنفيذ اقرأ الملفات الموجودة في المستودع، وبالأخص إن كانت موجودة:
 
-يجب في النهاية أن يكون هناك مصدر SQL canonical واضح يمكن تشغيله على Supabase من قاعدة نظيفة.
+1. "AMAN_EXECUTION_REFERENCE_REPOSITORY_FINAL_CLEAN.md"
+2. "AMAN_FINAL_FORENSIC_AUDIT_REPORT.md"
+3. ملفات "database/"
+4. ملفات "MANUS/"
+5. أي ملفات state أو handoff مرتبطة بالمشروع.
 
-إذا كان من الأفضل الاحتفاظ بالـ migrations بالإضافة إلى ملف نهائي، افعل ذلك، لكن يجب أن يكون هناك ملف نهائي واضح:
+لا تعِد تنفيذ تدقيق شامل للمشروع.
 
-database/AMAN_DATABASE_FINAL.sql
+التدقيق الأساسي تم مسبقًا.
 
-ويجب أن يعكس آخر حالة حقيقية للنظام.
+استخدم التقرير كقائمة إصلاحات، ثم افحص المصدر فقط بالقدر اللازم لتنفيذ الإصلاح والتحقق منه.
 
-لا تترك نسخًا متعارضة من تعريف نفس الكائن.
+---
 
-المرحلة 2 — إصلاح الهوية والصلاحيات 
+3. قاعدة التوقف الإلزامية
 
-نفذ نظام الأدوار والصلاحيات النهائي.
+هذه أهم قاعدة في التوجيه كله.
 
-القرار الحالي:
+إذا واجهت أي نقطة لا يمكن حسمها بشكل قطعي من:
 
-تطبيق العميل: مستخدم Customer. تطبيق الإدارة: Admin. تسجيل دخول الإدارة يكون Email + Password. لا توجد شاشة إنشاء حساب Admin. حساب الإدارة يُنشأ/يُدار من Supabase Auth ثم تتم ترقيته بواسطة SQL. 
+- المرجع النهائي.
+- تقرير التدقيق.
+- الكود الحالي.
+- قواعد العمل المذكورة بوضوح.
 
-يجب أن تكون الصلاحيات backend-enforced.
+وكانت تحتاج إلى قرار مني، فيجب عليك:
 
-لا تعتمد على:
+التوقف فورًا.
 
-admin=true داخل التطبيق. إخفاء الواجهة فقط. أي قيمة محلية قابلة للتعديل. 
+ولا:
 
-تحقق من:
+- تخمّن.
+- تختار من نفسك.
+- تفسر القرار تجاريًا.
+- تغير Business Logic.
+- تختار بين تصميمين.
+- تحذف إحدى الإمكانيات.
+- تضيف سلوكًا جديدًا.
 
-roles permissions role_permissions user_roles is_admin() admin_has_permission() 
+بدلًا من ذلك أرسل لي سؤالًا واضحًا يتضمن:
 
-وأصلح seed/initial role setup وفق المرجع.
+المشكلة
 
-إذا كان اختيار اسم الدور النهائي (admin أو super_admin) غير محسوم في المرجع بشكل قاطع، توقف واسألني قبل تعديل هذا الجزء.
+ما النقطة التي تمنعك من الاستمرار؟
 
-المرحلة 3 — Profile Provisioning 
+الخيارات
 
-أصلح مشكلة إنشاء profile بعد تسجيل مستخدم Supabase Auth.
+ما الخيارات الممكنة؟
 
-يجب أن يكون هناك مسار موثوق:
+الأثر
 
-auth.users → profiles
+ما أثر كل خيار على النظام؟
 
-ويجب ألا يصبح المستخدم في حالة Auth ناجحة مع عدم وجود profile.
+المطلوب مني
 
-راجع تأثير ذلك على:
+ما القرار المحدد الذي تحتاجه مني؟
 
-customer account subscriber balance admin promotion notifications audit 
+ثم انتظر إجابتي ولا تكمل ذلك الجزء.
 
-ويجب أن يكون الحل production-safe وليس workaround من Android.
+أمثلة على القرارات التي يجب التوقف عندها
 
-المرحلة 4 — Subscriber Provisioning 
+إذا وجدت تعارضًا حقيقيًا مثل:
 
-أصلح دورة إنشاء/تفعيل subscriber.
+- "admin" أم "super_admin"
+- "notifications" أم "system_notifications"
+- اختلاف معنى ledger entry
+- اختلاف دورة الدعم
+- اختلاف سياسة حذف/أرشفة الرقم
+- اختلاف سياسة تجديد الحماية بعد الانتهاء
+- اختلاف سلوك تصدير التقارير
 
-خصوصًا:
+فلا تختر من نفسك.
 
-عند أول شراء نقاط يتم اعتماده، يجب ألا تنتهي العملية بمجرد إضافة الرصيد إذا كان النظام يتطلب subscriber صالحًا لاستعمال الحماية.
+أما الإصلاحات التقنية الواضحة التي حددها المرجع والتقرير، فنفذها مباشرة.
 
-يجب أن يصبح المسار:
+---
 
-purchase submitted → admin approval → points credited → subscriber available → customer can activate protection
-
-نفذ ذلك وفق المرجع.
-
-لا تنشئ subscriber بطريقة تؤدي إلى duplicate subscribers.
-
-المرحلة 5 — Points Purchase 
-
-أصلح:
-
-submit_points_purchase
-
-بشكل كامل.
-
-المشاكل المعروفة التي يجب إصلاحها:
-
-privilege/grant mismatch. RLS compatibility. SECURITY INVOKER behavior. user ownership. idempotency. duplicate requests. transaction safety. 
-
-مهم جدًا:
-
-idempotency_key يجب ألا يسمح لمستخدم بإعادة استخدام مفتاح تابع لمستخدم آخر والحصول على نتيجة ذلك الطلب.
-
-يجب أن تكون قاعدة التكرار:
-
-نفس المستخدم + نفس العملية = إرجاع النتيجة السابقة بأمان. مستخدم مختلف + نفس المفتاح = رفض. 
-
-ولا تسمح بأي bypass للـ RLS فقط لتسهيل التطبيق.
-
-المرحلة 6 — Customer Numbers 
-
-أصلح lifecycle الخاص بالأرقام:
-
-إضافة رقم. التحقق من صحة الرقم. longest prefix match. تحديد provider. duplicate detection. ownership. edit حسب ما يسمح به المرجع. archive/delete حسب العقد النهائي. الحالات المناسبة. 
-
-يجب ألا يعتمد التطبيق على تحديد الشركة يدويًا.
-
-المرحلة 7 — Activation 
-
-أصلح activate_protection() بالكامل.
-
-يجب أن يتحقق Backend من:
-
-المستخدم authenticated. الرقم موجود. الرقم مرتبط بالمستخدم وفق قواعد النظام. لا توجد حماية نشطة متعارضة. provider الصحيح تم تحديده authoritative من prefix. tariff صحيح. المدة صحيحة. تكلفة العملية صحيحة. رصيد النقاط كافٍ. الخصم atomic. إنشاء protection atomic. إنشاء task plan. إنشاء operation/ledger/audit عند الحاجة. idempotency صحيحة. 
-
-مهم: لأن RPC قد يكون SECURITY DEFINER، لا تفترض أن RLS وحده يحمي authorization.
-
-المرحلة 8 — Extension / Renewal 
-
-أصلح extend_protection().
-
-المشكلة الحرجة:
-
-لا يجوز أن يحدث:
-
-deduct points → extend protection → insert operation → ثم يفشل idempotency
-
-لأن إعادة الطلب قد تؤدي إلى خصم مزدوج.
-
-يجب التحقق من idempotency قبل أي mutation خطير، وأن تكون العملية atomic.
-
-يجب دعم:
-
-تمديد حماية نشطة. insufficient balance. duplicate retry. idempotent retry. expired protection حسب قواعد المرجع. renewal/reactivation بعد الانتهاء. عدم إنشاء حماية ثانية لنفس الرقم. المرحلة 9 — Expiration / Renewal Lifecycle 
-
-نفذ lifecycle الحقيقي للحماية.
-
-يجب أن توجد آلية authoritative لتحديد:
-
-active expired renewed/reactivated 
-
-ويجب ألا تبقى حماية منتهية في حالة active إلى الأبد.
-
-طبق القواعد المعتمدة:
-
-الحماية المنتهية تُعلّم expired. لا تُنشأ مهام جديدة بعد حدود post-expiry المحددة. renewal بعد expiry يعيد التفعيل وفق إعدادات النظام. الجدولة بعد renewal تعتمد على آخر task مكتملة، وليس بالضرورة على تاريخ renewal. إذا كان موعد المهمة التالية قد تجاوز لحظة renewal، تنشأ المهمة الأولى من لحظة القبول وفق القاعدة المعتمدة. المرحلة 10 — Task Scheduling 
-
-أصلح task planning بالكامل.
-
-راجع:
-
-interval_days visibility_days_before allow_post_expiry_creation post_expiry_creation_limit_days duration expiry completed task anchor extension reschedule cancellation 
-
-يجب أن يكون plan deterministic.
-
-عند التنفيذ الفعلي لمهمة، يجب أن يؤخذ التاريخ الفعلي كـ anchor وفق المرجع.
-
-لا تحذف تاريخ الجدولة السابق بطريقة تفقد التاريخ التشغيلي.
-
-المرحلة 11 — Reschedule / Cancel / History 
-
-أصلح:
-
-reschedule cancel cancellation reason audit/history 
-
-يجب ألا يؤدي تعديل الخطة إلى فقدان تاريخ ما كان مقررًا سابقًا.
-
-يجب حفظ:
-
-before after actor timestamp reason affected task/protection 
-
-وفق العقد النهائي.
-
-المرحلة 12 — Notifications 
-
-راجع نظام notifications.
-
-يجب تحديد وتنفيذ العقد النهائي المستخدم من العميل والإدارة.
-
-إذا وجدت تعارضًا حقيقيًا بين:
-
-notifications system_notifications admin alerts 
-
-ولا تستطيع حسمه بشكل قطعي من المرجع، توقف واسألني.
-
-لا تنشئ نظامين متوازيين لمجرد تجاوز التعارض.
-
-المرحلة 13 — Support 
-
-أصلح backend الخاص بدعم العميل.
-
-يجب أن يستطيع العميل تنفيذ ما يسمح به المرجع من:
-
-إنشاء conversation/thread. إرسال message. قراءة الردود. 
-
-ويجب إصلاح grants/RLS/RPC اللازمة.
-
-لا تفتح INSERT عام على جداول الدعم إذا كان يمكن تحقيق السلوك عبر RPC آمن.
-
-المرحلة 14 — Audit + Financial Ledger 
-
-وحّد العقد النهائي لـ:
-
-audit logs financial ledger points ledger operations 
-
-ويجب ألا تفقد العمليات المهمة سجلها.
-
-إذا وجدت اختلافًا في naming فقط ويمكن توحيده دون تغيير business behavior، نفذه.
-
-أما إذا كان الاختلاف يغير المعنى المحاسبي أو التشغيلي، توقف واسألني.
-
-المرحلة 15 — RLS / SECURITY DEFINER 
-
-نفذ مراجعة مستهدفة لكل:
-
-SECURITY DEFINER function INSERT UPDATE DELETE SELECT RPC callable by authenticated admin-only operation customer-only operation 
-
-خصوصًا:
-
-activation extension purchases support notifications admin operations 
-
-يجب ألا تعتمد أي SECURITY DEFINER على RLS لحماية authorization داخل الوظيفة.
-
-المرحلة 16 — Indexes / Constraints 
-
-راجع وأصلح فقط ما يلزم للإنتاج:
-
-uniqueness foreign keys check constraints overlapping tariffs purchase lookup protection lookup task lookup idempotency notification targeting ledger audit 
-
-لا تضف indexes عشوائية.
-
-المرحلة 17 — Backend Contract Documentation 
-
-أنشئ/حدّث ملفًا يوضح العقد النهائي للـ RPC/backend إذا كان المشروع يستخدم مثل هذا الملف.
-
-يجب أن يكون واضحًا لكل RPC:
-
-الاسم parameters return caller authorization side effects tables touched idempotency errors audit transaction behavior المرحلة 18 — الاختبارات 
-
-أنشئ اختبارات SQL/contract مناسبة للمنطق الذي تم إصلاحه.
-
-يجب أن تغطي على الأقل:
-
-profile provisioning admin role points purchase purchase idempotency first purchase → subscriber number ownership activation activation insufficient balance activation duplicate extension extension duplicate expiration renewal task scheduling post-expiry rules admin authorization customer authorization support permissions notification permissions 
-
-إذا كانت بعض الاختبارات تتطلب Supabase حيًا وغير متاح، أنشئ الاختبارات المطلوبة دون الادعاء بأنها executed against production.
-
-ممنوعات 
+4. ممنوعات هذه المرحلة
 
 ممنوع:
 
-mock backend. fake success. bypass RLS. service_role داخل Android. hardcoded admin privilege. حذف business rules لإخفاء المشكلة. إنشاء حلول مؤقتة. تغيير واجهات Android في هذه المرحلة إلا إذا كان ذلك ضروريًا لتثبيت contract واضح. تشغيل SQL على Supabase الحقيقي في هذه المرحلة. 
+- بناء واجهات جديدة.
+- إعادة تصميم Android UI.
+- إنشاء HTML.
+- إنشاء mock screens.
+- إنشاء fake data.
+- fake success.
+- bypass للـ RLS.
+- service_role داخل Android.
+- hardcoded admin privilege.
+- حذف business rules لتجاوز خطأ.
+- إنشاء workaround مؤقت بدل إصلاح Backend.
+- تنفيذ SQL على قاعدة Supabase الحقيقية.
+- الادعاء بأن النظام تم اختباره على Supabase الحقيقي إذا لم يحدث ذلك فعليًا.
 
-لم نصل بعد إلى مرحلة التنفيذ على قاعدة Supabase الحقيقية.
+---
 
-Git 
+5. النتيجة النهائية المطلوبة
 
-لا تعمل push قبل اكتمال المرحلة.
+عند انتهاء AMAN-1 يجب أن تكون قاعدة البيانات والـ Backend قادرتين على دعم:
 
-عند اكتمالها:
-
-حدّث MANUS/PROJECT_STATE.md حدّث MANUS/HANDOFF.md حدّث MANUS/CHANGELOG.md أنشئ/حدّث MANUS/PHASE_2_STATE.md اذكر كل الملفات التي تغيرت. اذكر كل مشكلة تم إصلاحها. اذكر أي نقطة بقيت معلقة. نفذ commit واحد منطقي للمرحلة. ثم push. 
-
-إذا توقفت بسبب قرار مطلوب مني، لا تعمل commit باعتباره مرحلة مكتملة، بل وثّق نقطة التوقف بوضوح.
-
-معيار النجاح 
-
-لا تعتبر المرحلة ناجحة إلا إذا أصبح Backend قادرًا على دعم كامل lifecycle التالي:
-
-Customer → signup/profile → add number → buy points → admin approval → points credited → activate protection → scheduled tasks → task execution → extension → expiration → renewal
+Customer signup
+      ↓
+Profile
+      ↓
+Add Number
+      ↓
+Buy Points
+      ↓
+Admin Approval
+      ↓
+Points Credited
+      ↓
+Activate Protection
+      ↓
+Task Plan
+      ↓
+Task Execution
+      ↓
+Extension
+      ↓
+Expiration
+      ↓
+Renewal
 
 مع:
 
-authorization RLS idempotency audit ledger notifications concurrency safety 
+- Authentication
+- Authorization
+- RLS
+- RPC
+- Idempotency
+- Audit
+- Points Ledger
+- Financial Ledger
+- Notifications
+- Support
+- Task Scheduling
+- Concurrency Safety
 
-ثم توقف وانتظر التوجيه الثاني.
+---
 
+6. توحيد قاعدة البيانات النهائية
+
+راجع:
+
+"database/migrations/001_initial_schema.sql"
+
+و:
+
+"database/migrations/002_admin_contracts.sql"
+
+وأي migrations أخرى موجودة.
+
+يجب أن تصبح البنية النهائية متسقة ولا تحتوي على تعريفات متعارضة.
+
+إذا كان المشروع يستخدم migrations، حافظ على migration chain صحيحة.
+
+وفي الوقت نفسه يجب توفير مصدر SQL نهائي واضح، مثل:
+
+"database/AMAN_DATABASE_FINAL.sql"
+
+بحيث يمثل الحالة النهائية الفعلية لقاعدة البيانات.
+
+لا تترك ملفًا نهائيًا يحتوي على نسخة قديمة بينما migrations تحتوي على نسخة أخرى.
+
+---
+
+7. Authentication و Profiles
+
+أصلح provisioning الخاص بالمستخدم.
+
+يجب أن يكون هناك مسار موثوق:
+
+auth.users
+     ↓
+profiles
+
+لا يجوز أن ينجح تسجيل المستخدم في Auth ثم يبقى بدون profile إذا كان النظام يعتمد على profile في:
+
+- الحساب.
+- subscriber.
+- الرصيد.
+- الإدارة.
+- notifications.
+- audit.
+
+استخدم الطريقة production-safe المناسبة.
+
+لا تعتمد على Android لإنشاء profile كحل وحيد إذا كان ذلك يؤدي إلى حالة غير متسقة.
+
+---
+
+8. Admin Roles
+
+الإدارة لها تطبيق منفصل.
+
+تسجيل الدخول:
+
+Email
++
+Password
+
+لا توجد شاشة إنشاء Admin داخل التطبيق.
+
+الحساب الإداري يُدار من Supabase Auth، ثم تتم ترقيته من قاعدة البيانات بواسطة SQL.
+
+يجب:
+
+- seed الأدوار المطلوبة.
+- seed permissions المطلوبة.
+- ربط roles بالpermissions.
+- ربط المستخدم بالـ role.
+- حماية وظائف الإدارة في Backend.
+
+لا تستخدم:
+
+admin = true
+
+كبديل عن نظام الصلاحيات.
+
+إذا وجدت أن المرجع لا يحسم بشكل قاطع هل الاسم النهائي للدور هو:
+
+"admin"
+
+أو:
+
+"super_admin"
+
+توقف واسألني.
+
+---
+
+9. Subscriber Provisioning
+
+أصلح دورة subscriber.
+
+خصوصًا بعد أول شراء نقاط يتم اعتماده.
+
+يجب ألا يحدث:
+
+Purchase approved
+→ points credited
+→ لا يوجد subscriber
+→ activation fails
+
+يجب أن يصبح المستخدم قادرًا، بعد اكتمال المسار الصحيح، على استخدام نقاطه لتفعيل الحماية.
+
+مع منع duplicate subscribers.
+
+---
+
+10. Points Purchase
+
+أصلح:
+
+"submit_points_purchase"
+
+بالكامل.
+
+راجع:
+
+- grants.
+- RLS.
+- SECURITY INVOKER / SECURITY DEFINER.
+- ownership.
+- transaction.
+- validation.
+- duplicate request.
+- idempotency.
+
+قاعدة idempotency
+
+إذا أرسل المستخدم نفس العملية مرة أخرى:
+
+same user
++
+same idempotency key
+
+يجب إرجاع نتيجة العملية السابقة بأمان دون تنفيذ mutation ثانية.
+
+أما:
+
+different user
++
+same idempotency key
+
+فيجب رفضها.
+
+لا تمنح INSERT عام لمجرد تجاوز المشكلة إذا كان ذلك يضعف الأمان.
+
+---
+
+11. Customer Numbers
+
+أصلح lifecycle الخاص بالأرقام.
+
+يجب دعم العقد المطلوب للـ:
+
+- إضافة الرقم.
+- التحقق.
+- longest prefix match.
+- تحديد شركة الاتصالات.
+- duplicate detection.
+- ربط الرقم بالعميل.
+- الحالات.
+- التعديل إذا كان مسموحًا.
+- archive/delete إذا كان مسموحًا.
+
+مهم:
+
+الـ Provider يجب أن يكون authoritative من بيانات prefix.
+
+لا تعتمد على اختيار العميل اليدوي للشركة.
+
+---
+
+12. Protection Activation
+
+أصلح:
+
+"activate_protection()"
+
+بالكامل.
+
+يجب أن يتحقق Backend من:
+
+1. authenticated user.
+2. وجود الرقم.
+3. علاقة الرقم بالمستخدم.
+4. عدم وجود protection متعارضة.
+5. provider الصحيح.
+6. tariff الصحيح.
+7. duration الصحيحة.
+8. التكلفة الصحيحة.
+9. كفاية points.
+10. الخصم atomic.
+11. إنشاء protection atomic.
+12. إنشاء task plan.
+13. operation.
+14. ledger عند الحاجة.
+15. notification عند الحاجة.
+16. audit.
+17. idempotency.
+
+مهم جدًا
+
+إذا كانت الوظيفة:
+
+"SECURITY DEFINER"
+
+فلا تفترض أن RLS وحده يحمي authorization.
+
+يجب أن تتحقق الوظيفة نفسها من علاقة المستخدم بالرقم.
+
+---
+
+13. Provider Resolution
+
+يوجد منطق:
+
+"resolve_provider()"
+
+إذا كان موجودًا بالفعل، استخدمه بالطريقة الصحيحة.
+
+لا تعتمد في activation على:
+
+phone_numbers.provider_id
+
+إذا كان المرجع يتطلب أن يكون تحديد الشركة مبنيًا authoritative على prefix.
+
+يجب أن تكون عملية resolution متسقة بين:
+
+- إضافة الرقم.
+- العرض.
+- activation.
+- tariff calculation.
+
+---
+
+14. Points Calculation
+
+تكلفة الحماية يجب أن تعتمد على tariff الصحيح.
+
+المبدأ:
+
+Protection Cost
+=
+Provider/Company Daily Tariff
+×
+Protection Duration
+
+ولا تجعل التطبيق يحسب السعر ويكون Backend يقبل الرقم المرسل من التطبيق دون إعادة التحقق.
+
+Backend هو المصدر النهائي للتكلفة.
+
+---
+
+15. Extension
+
+أصلح:
+
+"extend_protection()"
+
+هناك مشكلة حرجة في idempotency يجب حلها.
+
+لا تسمح بهذا التسلسل:
+
+deduct points
+↓
+extend protection
+↓
+insert operation
+↓
+operation conflict
+
+لأن إعادة نفس الطلب قد تسبب:
+
+- خصم مزدوج.
+- تمديد مزدوج.
+
+يجب أن تكون العملية:
+
+validate idempotency
+↓
+validate authorization
+↓
+validate balance
+↓
+calculate
+↓
+mutate atomically
+↓
+record operation
+↓
+audit
+
+أو أي transaction design مكافئ يضمن النتيجة نفسها.
+
+---
+
+16. Protection Ownership
+
+تذكر أن:
+
+Customer-added phone ≠ protected phone ownership
+
+يمكن أن يضاف الرقم من أكثر من مستخدم قبل أول protection حسب قواعد النظام.
+
+لكن عند أول activation تصبح الحماية مرتبطة بالعميل الذي قام بالتفعيل وفق المرجع.
+
+يجب ألا تسمح RPCs باستغلال هذا السلوك للوصول إلى رقم أو حماية لا يملك المستخدم صلاحية التعامل معها.
+
+---
+
+17. Expiration
+
+أصلح دورة انتهاء الحماية.
+
+يجب أن توجد آلية authoritative تجعل protection المنتهية:
+
+active
+→ expired
+
+ولا تبقى active إلى الأبد بسبب عدم وجود job/trigger/process مناسب.
+
+راجع آلية التنفيذ المناسبة مع بنية Supabase الحالية.
+
+لا تفترض أن Android وحده سيقوم بذلك.
+
+---
+
+18. Renewal After Expiration
+
+طبّق القواعد المعتمدة:
+
+- الحماية المنتهية يمكن تجديدها وفق الإعدادات.
+- لا تنشأ protection ثانية لنفس الرقم.
+- إعادة التفعيل تكون على protection lifecycle الصحيح.
+- task scheduling بعد renewal يعتمد على القاعدة المعتمدة.
+
+قاعدة مهمة
+
+بعد التجديد بعد الانتهاء:
+
+إذا كانت المهمة التالية لم يحن موعدها بعد، استخدم الخطة المستمرة وفق آخر completed task.
+
+إذا كان موعد المهمة التالية قد تجاوز بالفعل لحظة renewal، طبق قاعدة إنشاء المهمة الأولى عند القبول.
+
+لا تختر سلوكًا مختلفًا من نفسك.
+
+---
+
+19. Task Scheduling
+
+راجع:
+
+- interval.
+- duration.
+- expiry.
+- completed task anchor.
+- extension.
+- reschedule.
+- cancellation.
+- visibility.
+- post-expiry creation.
+
+يجب أن تكون الخطة deterministic.
+
+---
+
+20. Task Settings
+
+الإعدادات الموجودة تشمل ما يلزم مثل:
+
+- "visibility_days_before"
+- "allow_post_expiry_creation"
+- "post_expiry_creation_limit_days"
+
+يجب ألا تكون مجرد أعمدة موجودة في database بدون تطبيق.
+
+يجب أن يستخدم task planning هذه القيم فعليًا.
+
+خصوصًا:
+
+"visibility_days_before"
+
+و:
+
+"allow_post_expiry_creation"
+
+و:
+
+"post_expiry_creation_limit_days"
+
+---
+
+21. Post-Expiry Task Creation
+
+راجع "rebuild_task_plan()" وأي وظائف مرتبطة.
+
+لا يكفي إيقاف الخطة عند "expires_at" إذا كان المرجع يسمح بإنشاء مهمة ضمن post-expiry window.
+
+طبّق الإعدادات فعليًا.
+
+إذا كان هناك تعارض حقيقي بين التقرير والمرجع حول هذا السلوك:
+
+توقف واسألني.
+
+---
+
+22. Reschedule
+
+عند إعادة جدولة مهمة:
+
+لا تفقد التاريخ التشغيلي للخطة القديمة.
+
+يجب حفظ:
+
+- old schedule.
+- new schedule.
+- actor.
+- timestamp.
+- reason إذا كان مطلوبًا.
+- task/protection.
+- audit.
+
+لا تستخدم deletion بطريقة تدمر التاريخ المطلوب.
+
+---
+
+23. Cancel
+
+إلغاء المهمة يجب أن يكون واضحًا.
+
+إذا كان cancellation reason مطلوبًا:
+
+- اجعله required.
+- خزنه.
+- سجله في audit.
+- لا تسمح بإلغاء صامت.
+
+---
+
+24. Notifications
+
+راجع نموذج notifications الحالي.
+
+يجب أن يكون واضحًا:
+
+- notification type.
+- recipient.
+- title.
+- body.
+- read state.
+- target/navigation إن وجد.
+- actor إن كان إداريًا.
+- timestamps.
+
+إذا كان هناك تعارض غير محسوم بين:
+
+"notifications"
+
+و:
+
+"system_notifications"
+
+أو أي نموذج آخر:
+
+توقف واسألني قبل إعادة هيكلة الجداول.
+
+لا تنشئ نموذجين متوازيين فقط لتجاوز المشكلة.
+
+---
+
+25. Support
+
+أصلح backend لدعم العميل.
+
+يجب أن يستطيع العميل تنفيذ ما يسمح به المرجع من:
+
+- إنشاء conversation.
+- إرسال message.
+- قراءة الرسائل.
+- استقبال الردود.
+
+راجع:
+
+- grants.
+- RLS.
+- RPC.
+- ownership.
+- admin access.
+
+لا تفتح جدول support بالكامل للمستخدمين إذا كان RPC آمنًا هو الحل الصحيح.
+
+---
+
+26. Audit
+
+يجب تسجيل العمليات الحساسة:
+
+- purchase approval.
+- purchase rejection.
+- points credit.
+- activation.
+- extension.
+- renewal.
+- task execution.
+- task reschedule.
+- task cancellation.
+- admin changes.
+- settings changes.
+
+السجل يجب أن يحافظ على:
+
+- actor.
+- timestamp.
+- action.
+- target.
+- before.
+- after.
+- reason عند الحاجة.
+
+إذا كان اختلاف أسماء الأعمدة فقط، وحلّه واضح من المرجع، وحّدها.
+
+إذا كان الاختلاف يغير المعنى، توقف واسألني.
+
+---
+
+27. Points Ledger
+
+كل حركة نقاط يجب أن تكون قابلة للتتبع.
+
+خصوصًا:
+
+- purchase credit.
+- activation deduction.
+- extension deduction.
+- adjustments إن كانت موجودة في المرجع.
+
+يجب ألا يستطيع التطبيق إنشاء رصيد محلي غير مدعوم بالـ backend.
+
+---
+
+28. Financial Ledger
+
+راجع جميع entry types.
+
+يجب أن تكون المعاني المحاسبية واضحة.
+
+إذا وجدت اختلافًا فقط في التسمية ويمكن توحيده دون تغيير المعنى، نفذ ذلك.
+
+إذا كان الاختلاف بين:
+
+- income
+- expense
+- adjustment
+- purchase
+- task payment
+
+يغير المعنى المالي:
+
+توقف واسألني.
+
+---
+
+29. RLS
+
+راجع كل جدول حساس.
+
+تحقق من:
+
+- SELECT.
+- INSERT.
+- UPDATE.
+- DELETE.
+- authenticated.
+- customer.
+- admin.
+- ownership.
+
+خصوصًا:
+
+- profiles
+- customer_numbers
+- points_purchase_requests
+- points_ledger
+- protections
+- protection_tasks
+- support
+- notifications
+- audit
+- financial ledger
+
+---
+
+30. SECURITY DEFINER
+
+كل function تستخدم:
+
+"SECURITY DEFINER"
+
+يجب أن يكون لديها authorization صريح.
+
+راجع:
+
+- "auth.uid()"
+- ownership
+- admin permission
+- role
+- target record
+- input validation
+
+ولا تعتمد على RLS الداخلي فقط.
+
+---
+
+31. Grants
+
+راجع جميع grants بعد تعديل RPC/RLS.
+
+يجب أن يكون:
+
+authenticated
+
+قادرًا على تنفيذ ما يحتاجه التطبيق فقط.
+
+لا تستخدم grants واسعة لتجاوز مشكلة RPC.
+
+---
+
+32. Constraints و Indexes
+
+راجع ما يلزم للإنتاج:
+
+- unique constraints.
+- foreign keys.
+- check constraints.
+- idempotency keys.
+- duplicate protections.
+- tariff ranges.
+- task lookups.
+- purchase lookups.
+- notifications.
+- audit.
+- ledger.
+
+أضف index فقط عندما يخدم query حقيقيًا.
+
+---
+
+33. Backend Contract
+
+إذا كان المشروع يحتوي على ملفات contracts/RPC documentation، حدّثها.
+
+لكل RPC مهم يجب أن يكون واضحًا:
+
+- name.
+- parameters.
+- return.
+- caller.
+- permission.
+- tables touched.
+- side effects.
+- idempotency.
+- error behavior.
+- audit behavior.
+- transaction behavior.
+
+---
+
+34. الاختبارات
+
+أنشئ أو حدّث الاختبارات التي يمكن تنفيذها محليًا.
+
+يجب أن تغطي على الأقل:
+
+Authentication
+
+- profile provisioning.
+- admin role.
+
+Points
+
+- purchase.
+- approval.
+- rejection.
+- duplicate.
+- idempotency.
+- cross-user idempotency.
+
+Numbers
+
+- add.
+- ownership.
+- provider resolution.
+- duplicate.
+
+Protection
+
+- activation.
+- insufficient balance.
+- unauthorized number.
+- duplicate protection.
+
+Extension
+
+- extension.
+- insufficient balance.
+- duplicate retry.
+- idempotency.
+
+Lifecycle
+
+- expiration.
+- renewal.
+- post-expiry.
+- task scheduling.
+
+Admin
+
+- role.
+- permissions.
+- unauthorized operation.
+
+Support
+
+- customer access.
+- admin access.
+
+Notifications
+
+- recipient access.
+- read/update access.
+
+إذا كانت بعض الاختبارات تحتاج Supabase حيًا، لا تدّعِ أنها نجحت إذا لم يتم تشغيلها فعليًا.
+
+---
+
+35. عدم تنفيذ Supabase الحقيقي
+
+في AMAN-1:
+
+لا تنفذ SQL على قاعدة Supabase الحقيقية.
+
+الهدف الآن هو تجهيز المصدر النهائي فقط.
+
+التنفيذ على قاعدة حقيقية سيكون في مرحلة لاحقة بعد اكتمال التطبيقات والمراجعة النهائية.
+
+---
+
+36. التحقق النهائي قبل اعتبار AMAN-1 مكتملًا
+
+تحقق من المسار:
+
+Auth
+↓
+Profile
+↓
+Subscriber
+↓
+Customer Number
+↓
+Points Purchase
+↓
+Approval
+↓
+Points
+↓
+Activation
+↓
+Protection
+↓
+Tasks
+↓
+Execution
+↓
+Extension
+↓
+Expiration
+↓
+Renewal
+
+وتحقق من:
+
+RLS
+RPC
+Permissions
+Idempotency
+Audit
+Ledger
+Notifications
+Support
+Task Scheduling
+
+يجب ألا توجد فجوة معروفة من تقرير التدقيق في نطاق Database/Backend.
+
+---
+
+37. لا تعتبر المرحلة مكتملة بسبب وجود الملفات فقط
+
+وجود SQL files لا يعني نجاح المرحلة.
+
+يجب التأكد من:
+
+- عدم وجود تضارب بين migrations.
+- عدم وجود RPC يشير إلى جدول/عمود غير موجود.
+- عدم وجود grant مفقود.
+- عدم وجود function تعتمد على صلاحية غير متاحة.
+- عدم وجود idempotency غير آمنة.
+- عدم وجود authorization مفقود.
+- عدم وجود lifecycle ناقص معروف.
+
+---
+
+38. Git / Handoff
+
+عند اكتمال AMAN-1 بالكامل:
+
+حدّث ملفات الحالة الموجودة، أو أنشئها إذا كان المرجع يتطلبها:
+
+MANUS/PROJECT_STATE.md
+MANUS/HANDOFF.md
+MANUS/CHANGELOG.md
+MANUS/PHASE_1_STATE.md
+
+وثّق:
+
+- ما تم إصلاحه.
+- الملفات التي تغيرت.
+- RPCs التي تغيرت.
+- الجداول التي تغيرت.
+- RLS التي تغيرت.
+- الاختبارات التي نجحت.
+- الاختبارات التي لم يمكن تشغيلها.
+- أي نقاط متبقية.
+
+ثم:
+
+1. commit واضح.
+2. push إلى المستودع الحالي.
+
+---
+
+39. إذا انتهت حصة Manus أثناء التنفيذ
+
+إذا انتهت الحصة قبل اكتمال AMAN-1:
+
+لا تدّعِ أن المرحلة مكتملة.
+
+إذا كان من الضروري حفظ العمل، نفذ commit/handoff استثنائيًا.
+
+حدّث:
+
+"MANUS/HANDOFF.md"
+
+بوضوح:
+
+- آخر خطوة مكتملة.
+- آخر ملف تم تعديله.
+- الملفات غير المكتملة.
+- ما بقي.
+- أي مشكلة تمنع الاستمرار.
+- الخطوة التالية الدقيقة.
+
+---
+
+40. عند وجود قرار مطلوب مني
+
+مرة أخرى:
+
+لا تخمّن.
+
+إذا كان الحل يعتمد على قرار مني:
+
+STOP
+↓
+ASK USER
+↓
+WAIT
+↓
+CONTINUE AFTER ANSWER
+
+ولا تعتبر التوجيه إذنًا لاتخاذ قرارات تجارية من نفسك.
+
+---
+
+41. نهاية AMAN-1
+
+بعد اكتمال هذه المرحلة فقط، توقف.
+
+لا تبدأ:
+
+- Customer UI.
+- Admin UI.
+- Android visual repair.
+- navigation repair.
+- screen implementation.
+
+هذه ستكون في:
+
+AMAN-2
+
+والمرحلة التالية ستستخدم Backend الذي تم تثبيته في AMAN-1.
+
+النهاية
