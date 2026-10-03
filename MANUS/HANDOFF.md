@@ -1,41 +1,38 @@
-# تسليم AMAN — نقطة توقف STAGE 2 Admin Android
+# تسليم AMAN — بعد كتابة مصادر STAGE 3
 
-## المستودع وGit
+## المستودع ونقطة التسليم
 
 - Repository: `aaaaubad-byte/AMAN.V1`.
-- Branch: `main`; `origin` يشير إلى المستودع الصحيح.
-- HEAD المحلي و`origin/main`: `0384a3cf11ea21ddb9e77c3e188b6a0db5970156` — `phase 1: add AMAN database migration`.
-- لا commit جديد ولا Push. الـworktree يحتوي `MANUS/CHANGELOG.md` و`MANUS/PROJECT_STATE.md` معدلين، `MANUS/PHASE_2_STATE.md` و`MANUS/HANDOFF.md` جديدين، ومجلد `admin/` جديدًا. لا ملفات محذوفة.
-- لا تغييرات في `database/` أو `MANUS/PHASE_1_STATE.md`.
+- Branch: `main`.
+- مصدر العميل موجود تحت `customer/`؛ مستقل عن `admin/`.
+- نقطة الأساس قبل عمل هذه المرحلة كانت `248c431` — `phase 2: add admin contracts and checkpoint`.
+- لم يُسلّم APK ولم يُنشر المنتج. استُخدم assembleDebug للاختبار التقني فقط.
 
-## حدود التفويض
+## حدود التفويض لهذه المرحلة
 
-أذن المستخدم صراحة بالبدء في STAGE 2 بالاعتماد على SQL المخزن فقط وغير المتحقق. منع الاتصال بقاعدة Supabase الحقيقية أو إنشاء قاعدة أو تنفيذ/تغيير SQL أثناء هذه المرحلة. وأكد في طلب التنفيذ عدم Push أثناء العمل؛ لا يُسمح به إلا بعد اكتمال المرحلة (أو مسار تسليم نفاد الرصيد إن انطبق). لم يُنفذ أي اتصال حي أو SQL/RPC.
+المطلوب قراءة المرجع و`database/` و`MANUS/`، كتابة ملفات عميل Android، وعدم الاتصال بـSupabase حقيقي أو تنفيذ queries/RPC/SQL فعلية. تحقق build محلي فقط. الرفع المطلوب هنا هو **مصدر Android والوثائق إلى المستودع**، لا نشر التطبيق.
 
 ## نقطة الإنجاز الدقيقة
 
-تم إنشاء مشروع Kotlin/Jetpack Compose أصلي داخل `admin/`، مع 15 وجهة معرفة، RTL، تسجيل دخول Email/Password يعتمد على Supabase Auth ثم `is_admin()`, جلسات/لقطات محلية مشفرة، قراءة PostgREST، بحث مجمع، تحديث دوري للقراءات، تفاصيل مرتبطة لبعض الجداول، نسخ أرقام، خروج، واعتماد طلب النقاط بعد تأكيد عبر RPC. تُسجل مهمة السداد فقط بعد تأكيد المشغل أنها نفذت خارجيًا؛ SQL نفسه لا ينفذ الدفع الخارجي.
+اكتمل هيكل مستقل `customer/` ويتضمن المشروع Gradle وAndroid Manifest والموارد، واجهات C01–C15، RTL وهوية داكنة، Auth، مستودع وبوابة REST/RPC، cache مشفرًا ومجزأ حسب المستخدم، تحديثًا خلفيًا مشروطًا بالاتصال، حالات Offline/Error/Empty/Stale، وفحوص وحدة.
 
-تم اجتياز:
+عمليات نقاط الشراء/التفعيل/التمديد مقسمة: `submit_points_purchase` يودع طلبًا Pending دون زيادة رصيد؛ `activate_protection` و`extend_protection` وحدهما يطلبان خصم النقاط والحماية؛ التطبيق لا يعرض المهام التشغيلية. طلب الشراء وحده يمكن أن يحفظ intent مشفرًا عند Offline ويعيد إرساله بالمفتاح نفسه؛ يظل غير مسجل بالخادم ولا يضيف نقاطًا حتى ردّه. التفعيل والتمديد لا ينفذان Offline.
+
+## تحقق محلي
 
 ```bash
-cd admin && ./gradlew clean testDebugUnitTest assembleDebug --console=plain
+cd customer && ./gradlew clean testDebugUnitTest assembleDebug --no-daemon --console=plain
 ```
 
-النتيجة `BUILD SUCCESSFUL`، 5 اختبارات/صفر إخفاق، APK debug طوله 18 MiB ومعرّفه `com.aman.admin`، SHA-256 `dad65b4cdacff051b9ca0dff0b63dcd5834927d5ae944326580839d1fd599370`. فحص APK لم يجد إعداد service-role أو بيانات اعتماد JWT خاصة. لا يوجد جهاز/محاكي Android متصل؛ لا يوجد اختبار UI أو اختبار Supabase حي.
+النتيجة: BUILD SUCCESSFUL، 4 اختبارات/صفر إخفاق، assembleDebug للتحقق فقط. لا جهاز أو قاعدة Supabase حية جرى اختبارها، ولا URL/anon key مهيأ.
 
-## لماذا المرحلة ليست مكتملة
+## قيود تستلزم المرحلة الرابعة
 
-راجع جدول الشاشات التفصيلي في `MANUS/PHASE_2_STATE.md` وسجل `admin/IMPLEMENTATION_BLOCKERS.md`. من الوقائع المستخلصة من SQL الملتزم:
+التفاصيل في `customer/IMPLEMENTATION_BLOCKERS.md` و`MANUS/PHASE_3_STATE.md`. أهمها: لا كتابة أرقام C06، لا إرسال دعم C10، لا ضمان Profile/Subscriber عند signup، اعتماد قراءة التعرفة على migration 002 غير متحقق، RLS لا يكشف حماية العملاء الآخرين، وRPC التفعيل/التمديد غير idempotent على مستوى المعاملة. لا تحاول تخمين عقود أو ترقيع SQL ضمن هذه الحالة.
 
-- `payment_tasks` لا يظهر ضمن منح `GRANT SELECT`؛ لذلك A07 لا تستطيع حتى تحميل قائمة المهام عبر PostgREST.
-- `task_settings` و`provider_tariffs` لا يظهران ضمن منح القراءة؛ تفاصيل A05/A08 وإعدادات A11 غير مكتملة.
-- لا توجد عقود إدارية للرفض، reschedule/cancel، CRUD الشركات والباقات والدفع والمستخدمين، إرسال الإشعارات الإدارية، أو تصدير/تقارير مالية كاملة.
-- `execute_payment_task` يسجل المهمة/الحركة المالية ويعيد بناء الخطة؛ لا ينفذ عملية الدفع الخارجية.
-- عنوان Supabase ومفتاح anon العام غير متاحين. الترحيل غير متحقق مقابل النشر الفعلي.
+## الاستئناف دون إعادة العمل
 
-هذه العقود لا يجوز محاكاتها أو تجاوزها بمفتاح service-role. لذلك حالة المرحلة **in progress**، لا “complete”.
-
-## الخطوة التالية بالضبط
-
-استئنافًا من ملفات `admin/` الحالية، وليس إعادة إنشاء المشروع: حسم/اعتماد العقود الإدارية الناقصة في مصدر الحقيقة ضمن الصلاحيات المخصصة لذلك، ثم إكمال الشاشات/الأفعال وفقها وإضافة اختبارات مناسبة. بعد ذلك فقط أجرِ مراجعة مطابقة المرجع و`database/`، ثم Commit وPush. لا ترفع الـworktree الحالي غير المكتمل.
+1. اقرأ `MANUS/PROJECT_STATE.md` و`MANUS/PHASE_3_STATE.md` و`customer/IMPLEMENTATION_BLOCKERS.md`.
+2. ابدأ مرحلة الإصلاح اللاحقة بحسم العقود المصدرية والاختبارات المخولة، لا بإعادة إنشاء `customer/`.
+3. عالج عوائق `admin/` فقط في مسار المرحلة الرابعة المطلوب؛ عمل STAGE 3 لم يغير `admin/`.
+4. لم يحدث اتصال حي، تنفيذ SQL، استعلامات/RPC حقيقية أو تغيير ملفات `database/`.
