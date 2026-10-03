@@ -1,9 +1,15 @@
-# AMAN Changelog
+# سجل التغييرات AMAN
 
-## Unreleased — Phase 1 Database
+## STAGE 2 — تطبيق Admin Android (قيد التنفيذ وغير مكتمل)
 
-- Added `database/migrations/001_initial_schema.sql`.
-- Added `database/README.md`.
-- Added truthful Phase 1 and project state records under `MANUS/`.
-- No live Supabase database was modified.
-- Live verification and database tests remain pending because the requested `AMAN.V1` project is not available through the current Supabase connection.
+- أُنشئ مشروع Android أصلي Kotlin/Jetpack Compose داخل `admin/`؛ لا نسخة ويب أو بيانات وهمية. يحتوي Gradle wrapper، تهيئة Android، موارد RTL، طبقات الاتصال/المستودع/الحالة والواجهة، cache مشفرًا، وتحديثًا دوريًا للقراءة.
+- عُرّفت الوجهات الخمس عشرة وشبكة التسعة والشريط السفلي. أُضيفت قراءة فعلية حسب أسماء الجداول/RPC في SQL المخزن، تفاصيل إضافية لبعض العلاقات المتاحة، اعتماد طلب النقاط بعد تأكيد، وتسجيل تنفيذ مهمة فقط بعد تأكيد مشغل السداد الخارجي.
+- لا تزال وظائف رئيسية ناقصة أو متعذرة بسبب العقود والمنح الغائبة: اقرأ `admin/IMPLEMENTATION_BLOCKERS.md` وجدول كل شاشة في `MANUS/PHASE_2_STATE.md`. لا تُعد المرحلة مكتملة.
+- تحقق البناء النظيف: `./gradlew clean testDebugUnitTest assembleDebug` — نجاح؛ 5 اختبارات، لا إخفاقات/أخطاء. APK debug أُنتج وفُحص لغياب بيانات اعتماد service-role/JWT الخاصة؛ لم يُختبر على جهاز ولا على Supabase حي.
+- لا اتصال بقاعدة Supabase، لا SQL/RPC فعلي، لا إنشاء قاعدة، ولا تعديل في ملفات `database/` أو حالة STAGE 1.
+- وفق توجيه المستخدم، لا Commit ولا Push قبل اكتمال STAGE 2؛ تبقى التغييرات محلية وغير ملتزمة.
+
+## STAGE 1 — قاعدة بيانات AMAN
+
+- أُضيف `database/migrations/001_initial_schema.sql` و`database/README.md` في commit `0384a3cf11ea21ddb9e77c3e188b6a0db5970156`.
+- تطبيق الترحيل والتحقق من قاعدة Supabase المقصودة لم يُثبت؛ لا تعد STAGE 1 مكتملة.

@@ -1,15 +1,18 @@
 # AMAN Database
 
-## Phase 1
+## Migration order
 
-The initial production schema is defined in:
+Apply migration files in lexical order to a **clean, authorized PostgreSQL/Supabase project**:
 
-- `migrations/001_initial_schema.sql`
+1. `migrations/001_initial_schema.sql` — Phase 1 core schema, constraints, indexes, base RPCs and customer RLS.
+2. `migrations/002_admin_contracts.sql` — permission-scoped Admin reads, least-privilege policies and audited Admin RPCs.
 
-Apply migrations in lexical order to a clean PostgreSQL/Supabase project. The migration includes the core AMAN entities, constraints, indexes, triggers, RPC functions, RLS policies, ledgers, audit records, notifications, and task-plan structures.
+Both files are source artifacts. **Neither migration has been executed on a database in this task.** Migration 002 is an additive contract extension; review it as a whole before applying it in the separately authorized database phase.
 
 ## Important
 
-- This migration was prepared without applying changes to a live Supabase project, as instructed for this phase.
-- Live-schema verification, RPC execution tests, RLS tests, rollback/concurrency tests, and comparison against a live database remain pending until the correct database connection is available.
-- `service_role` must never be embedded in either Android application.
+- No Supabase database was created or connected to, and no SQL was executed.
+- Static PostgreSQL grammar parsing is not database execution and does not verify object resolution, privileges, PL/pgSQL runtime behavior, RLS outcomes, concurrency or data migration effects.
+- Live-schema verification, RPC and RLS tests, rollback/concurrency tests, and comparison against the intended environment remain pending.
+- An Admin account must be securely provisioned with an active role and the needed permission mappings; the Android client must never self-assign Admin.
+- Never embed `service_role` in either Android application.

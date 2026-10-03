@@ -1,9 +1,31 @@
-# AMAN Project State
+# حالة مشروع AMAN
 
-- Repository: `aaaaubad-byte/AMAN.V1`
-- Current phase: Phase 1 — Database
-- Phase status: In progress; SQL migration exists, but live verification is pending.
-- Completed repository work: initial database migration and database documentation created.
-- Next required work: verify and test the migration against the correct Supabase project, then complete Phase 1 before any Android application work.
-- Constraints: no Web App, Prototype, Mock, Fake API, Placeholder, or unverified completion claim.
-- Last known repository commit before this work: `0ab3f021950d5f70ccca195679f06072c36d57fa`.
+## المستودع والتنفيذ
+
+- المستودع: `aaaaubad-byte/AMAN.V1`.
+- الفرع: `main`.
+- آخر commit على `main` محليًا وعن بُعد: `0384a3cf11ea21ddb9e77c3e188b6a0db5970156` — `phase 1: add AMAN database migration`.
+- لا يوجد commit لعمل المرحلة الثانية حتى الآن، ولا Push؛ العمل محلي وغير مكتمل.
+- المرحلة النشطة: **STAGE 2 — تطبيق Admin Android**، وفق استثناء المستخدم الصريح للبدء اعتمادًا على ترحيل SQL غير متحقق.
+
+## حالة المراحل
+
+- STAGE 1: ملفات الترحيل موجودة ومُلتزمة، لكن لم يُثبت تطبيقها أو اختبارها على مشروع Supabase المقصود؛ لذلك المرحلة غير مكتملة.
+- STAGE 2: مشروع Kotlin/Jetpack Compose أصلي أُنشئ تحت `admin/`، واجتاز البناء النظيف واختبارات كتالوج العقود، لكن التطبيق **غير مكتمل وظيفيًا** وفق المرجع. جميع 15 وجهة معرفة، بينما عمليات القراءة/التعديل/الإرسال والتقارير تختلف حسب العقود المتاحة؛ راجع جدول `MANUS/PHASE_2_STATE.md` وسجل `admin/IMPLEMENTATION_BLOCKERS.md`.
+- STAGE 3 وSTAGE 4: لا يوجد تحقق أو اعتماد جديد في هذا العمل.
+
+## ما تم التحقق منه
+
+- `./gradlew clean testDebugUnitTest assembleDebug`: نجاح.
+- اختبارات الوحدة: 5 اختبارات، 0 فشل، 0 أخطاء، 0 متخطاة؛ تغطي تعداد الوجهات والبطاقات وربط العقود، لا اختبارات واجهة أو تكامل.
+- APK تجريبي `com.aman.admin`، حجمه 18 MiB، SHA-256: `dad65b4cdacff051b9ca0dff0b63dcd5834927d5ae944326580839d1fd599370`.
+- فحص APK لم يجد إعداد service-role أو نمط JWT يشبه بيانات اعتماد خاصة.
+- لا يوجد جهاز/محاكي Android متصل؛ لم ينفذ اختبار تشغيل فعلي.
+
+## حدود قاعدة البيانات
+
+لم يُنشأ اتصال بقاعدة Supabase الحقيقية، ولم يُنفذ SQL أو RPC على قاعدة، ولم تتغير ملفات أو حالة `database/` أو `MANUS/PHASE_1_STATE.md`. قيم التشغيل الفعلية لـ`SUPABASE_URL` و`SUPABASE_ANON_KEY` غير متاحة. الاعتماد على الترحيل المُلتزم فقط وغير متحقق؛ بعض شاشات القراءة وكتابات CRUD المطلوبة غير مدعومة بصلاحيات أو عقود في الترحيل، ولا يجوز اختراعها أو تجاوزها بمفتاح service-role.
+
+## الخطوة التالية
+
+حسم عقود القراءة والكتابة الإدارية الناقصة في مصدر الحقيقة وفق التفويض المناسب، أو توفير عقد مُعتمد بديل؛ ثم إكمال واجهات وإجراءات كل شاشة واختبارها دون بيانات/واجهات وهمية. بعد اكتمال STAGE 2 ومراجعة المرجع و`database/` و`admin/` فقط، يُنفذ Commit وPush كما طلب المستخدم. إلى ذلك الحين لا ترفع هذه الحالة غير المكتملة.
