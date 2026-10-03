@@ -6,7 +6,7 @@
 - الفرع: `main`.
 - نقطة الأساس قبل هذا التسليم: `248c431` — `phase 2: add admin contracts and checkpoint`.
 - مرحلة العمل الحالية: **STAGE 3 — CUSTOMER ANDROID SOURCE**، ملفاتها مستقلة داخل `customer/`.
-- المصدر يجري إيداعه في GitHub بهذا التسليم؛ لا APK نشر أو إصدار منتج.
+- مصدر المرحلة الثالثة موثّق في GitHub على `main` عبر commit `8807700`; لا APK نشر أو إصدار منتج.
 
 ## حالة المراحل
 
