@@ -9,7 +9,7 @@ import androidx.compose.ui.graphics.Color
 private val charcoal = Color(0xFF151719)
 private val surface = Color(0xFF202326)
 private val surfaceRaised = Color(0xFF292D30)
-private val red = Color(0xFFD9363E)
+private val red = Color(0xFFFC0B39)
 private val text = Color(0xFFF5F5F5)
 private val muted = Color(0xFFAFB4B8)
 private val line = Color(0xFF3B4145)

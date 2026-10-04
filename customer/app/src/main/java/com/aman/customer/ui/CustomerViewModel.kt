@@ -127,8 +127,9 @@ class CustomerViewModel(context: Context) : ViewModel() {
     fun submitPurchase(packageId: String, methodId: String, reference: String) {
         viewModelScope.launch {
             _state.value = _state.value.copy(mutationBusy = true, mutationMessage = null)
+            var idempotencyKey = ""
             try {
-                val key = withContext(Dispatchers.IO) { repository.purchaseIdempotencyKey(packageId, methodId, reference) }
+                idempotencyKey = withContext(Dispatchers.IO) { repository.purchaseIdempotencyKey(packageId, methodId, reference) }
                 val userId = gateway.currentUserId()
                 val existing = if (userId == null) null else withContext(Dispatchers.IO) {
                     repository.queuedPurchases(userId).firstOrNull { it.optString("package_id") == packageId &&
@@ -143,20 +144,20 @@ class CustomerViewModel(context: Context) : ViewModel() {
                     return@launch
                 }
                 if (!repository.isOnline()) {
-                    repository.queuePurchase(packageId, methodId, reference, key)
+                    repository.queuePurchase(packageId, methodId, reference, idempotencyKey)
                     _state.value = _state.value.copy(mutationBusy = false,
                         mutationMessage = "حُفظ طلب شراء النقاط محليًا بشكل مشفر؛ لم يصل بعد إلى الخادم ولم تُضف نقاط. سيرسل عند توفر الاتصال.")
                     scheduleCustomerOneTimeRefresh(appContext)
                     load(_state.value.screen)
                     return@launch
                 }
-                repository.submitPurchase(packageId, methodId, reference, key)
+                repository.submitPurchase(packageId, methodId, reference, idempotencyKey)
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = "وصل طلب الشراء إلى الخادم للمراجعة؛ لم تُضف النقاط بعد.")
                 load(_state.value.screen)
             } catch (e: CustomerBackendException) {
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = mutationMessage(e.message))
             } catch (e: IOException) {
-                repository.queuePurchase(packageId, methodId, reference, key)
+                repository.queuePurchase(packageId, methodId, reference, idempotencyKey)
                 _state.value = _state.value.copy(mutationBusy = false,
                     mutationMessage = "انقطع الاتصال قبل تأكيد نتيجة الخادم؛ حُفظ الطلب محليًا بنفس مفتاح التكرار ولم تُضف نقاط. تحقق من سجل الطلبات بعد المزامنة.")
                 scheduleCustomerOneTimeRefresh(appContext)
