@@ -323,7 +323,11 @@ private fun RecordSectionScreen(state: AdminUiState, viewModel: AdminViewModel) 
                 itemsIndexed(rowsForList, key = { index, row -> row.optString("id").ifBlank { "record-$index" } }) { index, row ->
                     val sourceIndex = if (state.relatedKind != null) relatedIndexed[index].index else index
                     val isSelected = if (state.section == AdminSection.REPORTS) false else if (state.relatedKind != null) sourceIndex == state.relatedSelectedIndex else index == state.selectedIndex
-                    CompactRecord(row, isSelected, { if (state.relatedKind != null) viewModel.selectRelated(sourceIndex) else if (state.section != AdminSection.REPORTS) viewModel.select(index) },
+                    CompactRecord(row, isSelected, {
+                        if (state.relatedKind != null) viewModel.selectRelated(sourceIndex)
+                        else if (state.section == AdminSection.SEARCH) viewModel.open(searchDestination(row))
+                        else if (state.section != AdminSection.REPORTS) viewModel.select(index)
+                    },
                         if (state.section == AdminSection.REPORTS) AdminSection.REPORTS else state.section)
                 }
             }
@@ -334,7 +338,6 @@ private fun RecordSectionScreen(state: AdminUiState, viewModel: AdminViewModel) 
 @Composable
 private fun SelectedPanel(state: AdminUiState, viewModel: AdminViewModel, row: JSONObject?, relatedRow: JSONObject?, clipboard: androidx.compose.ui.platform.ClipboardManager,
                           onActionRequest: (AdminMutation, String) -> Unit, onStatusRequest: (String) -> Unit, onLogout: () -> Unit) {
-    if (state.section == AdminSection.NOTIFICATIONS) return
     val section = state.section
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), shape = PanelShape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -791,6 +794,21 @@ private fun fieldLabel(key: String) = when (key) {
     "target_type" -> "نوع المستهدف"; "target_id" -> "المستهدف"; "title" -> "العنوان"; "body" -> "المحتوى"; "recipient_count" -> "عدد المستلمين"; "sent_at" -> "الإرسال"
     else -> key
 }
+private fun searchDestination(row: JSONObject): AdminSection = when (row.optString("_aman_source_table")) {
+    "profiles" -> AdminSection.USERS
+    "subscribers" -> AdminSection.SUBSCRIBERS
+    "phone_numbers", "customer_numbers" -> AdminSection.ADDED_NUMBERS
+    "protections" -> AdminSection.ACTIVE_NUMBERS
+    "points_purchase_requests" -> AdminSection.PURCHASES
+    "payment_tasks" -> AdminSection.PAYMENT_TASKS
+    "telecom_providers" -> AdminSection.PROVIDERS
+    "points_packages" -> AdminSection.PACKAGES
+    "payment_methods" -> AdminSection.PAYMENT_METHODS
+    "task_settings" -> AdminSection.TASK_SETTINGS
+    "admin_notifications" -> AdminSection.NOTIFICATIONS
+    else -> AdminSection.REPORTS
+}
+
 private fun recordTitle(section: AdminSection, row: JSONObject): String = when {
     row.has("_record_type") -> "${row.optString("_record_type")} · ${row.optString("full_name").ifBlank { row.optString("phone_e164") }.ifBlank { row.optString("request_number") }.ifBlank { row.optString("operation_type") }.ifBlank { row.optString("id") }}"
     section == AdminSection.PROVIDERS -> row.optString("name").ifBlank { row.optString("code") }
