@@ -116,7 +116,7 @@ private fun DataCard(record: CustomerRecord, trailing: String? = null, onClick: 
                 }
                 trailing?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium) }
             }
-            val summary = record.details.filter { it.first in setOf("expires_at", "duration_days", "points_per_day_snapshot", "total_points_snapshot", "points_amount_snapshot", "price_amount_snapshot", "entry_type", "amount", "balance_after", "added_at", "created_at", "rejection_reason", "content") }.take(4)
+            val summary = record.details.filter { it.first in setOf("expires_at", "duration_days", "points_per_day_snapshot", "total_points_snapshot", "points_amount_snapshot", "price_amount_snapshot", "entry_type", "amount_points", "balance_after", "added_at", "created_at", "rejection_reason", "body") }.take(4)
             summary.forEach { (key, value) -> if (value.isNotBlank()) Text("${fieldName(key)}: ${value.displayValue()}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (record.title.any(Char::isDigit) && record.source in setOf("protections", "customer_numbers"))
@@ -250,8 +250,8 @@ private fun PointsScreen(data: CustomerScreenData, state: CustomerUiState, vm: C
     SelectJsonItem("وسيلة الدفع", methods, methodId, { it.optString("name") }, { methodId = it.optString("id") }, "C04.PAYMENT.METHOD")
     methods.firstOrNull { it.optString("id") == methodId }?.let { method ->
         if (method.optString("instructions").isNotBlank()) Text("التعليمات: ${method.optString("instructions")}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val paymentData = method.optJSONObject("payment_data")
-        if (paymentData != null && paymentData.length() > 0) Text("بيانات الدفع: ${paymentData.toString()}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val paymentData = method.optString("account_identifier")
+        if (paymentData.isNotBlank()) Text("بيانات الدفع: $paymentData", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
     OutlinedTextField(reference, { reference = it }, Modifier.fillMaxWidth().traceElement("C04.TRANSFER.REFERENCE"), label = { Text("رقم مرجع التحويل") }, singleLine = true)
     Button(onClick = { confirm = true }, enabled = !state.mutationBusy && packageId.isNotBlank() && methodId.isNotBlank() && reference.isNotBlank(), modifier = Modifier.fillMaxWidth().traceElement("C04.ACTION.SUBMIT")) {
@@ -423,11 +423,7 @@ private fun AddNumberScreen(data: CustomerScreenData, state: CustomerUiState, vm
                 if (protected) NoticeBanner("لا يمكن تعديل هذا الرقم أو أرشفته ما دامت عليه حماية نشطة.", true)
                 if (row.optString("status") == "active" && !protected) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = {
-                            editingId = row.optString("id")
-                            phone = row.optJSONObject("phone_numbers")?.optString("phone_e164").orEmpty()
-                        }, modifier = Modifier.weight(1f).traceElement("C06.ACTION.EDIT"), enabled = !state.mutationBusy) { Text("تعديل") }
-                        OutlinedButton(onClick = { archiveConfirmation = row.optString("id") }, modifier = Modifier.weight(1f).traceElement("C06.ACTION.DELETE"), enabled = !state.mutationBusy) { Text("أرشفة") }
+                        NoticeBanner("التعديل والأرشفة متوقفان: SQL الجديد لا يعرّف RPC كنسيًا لهما (DATABASE_CONTRACT_GAP).", true)
                     }
                 }
             }
@@ -463,6 +459,7 @@ private fun ActivateScreen(data: CustomerScreenData, state: CustomerUiState, vm:
     val days = daysText.toIntOrNull() ?: 0
     val cost = com.aman.customer.data.activationCost(days, daily)
     SectionTitle("تفعيل حماية رقم", "اختيار رقم غير محمي · مدة بالأيام · التكلفة تُحتسب وفق التعرفة المتاحة، ويعيد الخادم التحقق ذريًا.")
+    NoticeBanner("SQL_REVISION_REQUIRED: عقد V7 يتطلب إنشاء activated_numbers عند أول تفعيل، بينما activate_protection في SQL الحالي يستقبل activated_number_id ولا ينشئ المرشح من customer_numbers. أوقفنا الزر لمنع إرسال phone_number_id بعقد خاطئ.", true)
     NoticeBanner("الاختيار المحلي لا يثبت أن الرقم غير محمي لدى مستخدم آخر؛ تحقق الخادم هو المعتمد ولا يحدث خصم عند رفضه.", true)
     SelectJsonItem("رقم غير محمي مرتبط بحسابك", numbers, phoneId, { row -> row.optJSONObject("phone_numbers")?.let { p -> p.optString("phone_e164").ifBlank { p.optString("normalized_phone") } } ?: "رقم غير متاح" }, { row -> phoneId = row.optJSONObject("phone_numbers")?.optString("id").orEmpty() }, "C07.PHONE.SELECT")
     OutlinedTextField(daysText, { daysText = it.filter(Char::isDigit) }, Modifier.fillMaxWidth().traceElement("C07.DURATION.INPUT"), label = { Text("مدة الحماية بالأيام") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
@@ -478,8 +475,9 @@ private fun ActivateScreen(data: CustomerScreenData, state: CustomerUiState, vm:
     if (data.errorNotes.any { it.startsWith("tariffs:") }) NoticeBanner("تعذر قراءة التعرفة. قد يتطلب الوصول تطبيق عقد القراءة الإضافي الموجود في database/002_admin_contracts.sql.", true)
     val enough = balance >= 0 && cost != null && balance >= cost
     if (cost != null && balance >= 0 && !enough) NoticeBanner("الرصيد غير كافٍ: تحتاج $cost نقطة، والمتاح $balance. اشتر نقاطًا أولًا.", true)
-    if (!enough && cost != null && balance >= 0) OutlinedButton(onClick = { vm.navigate(CustomerScreen.POINTS) }) { Text("الانتقال إلى شراء النقاط") }
-    val enabled = !state.mutationBusy && vm.online() && phoneId.isNotBlank() && days > 0 && daily > 0 && enough && subscriberReady
+    if (!enough && cost != null && balance >= 0) OutlinedButton(onClick = { vm.navigate(CustomerScreen.POINTS) }, modifier = Modifier.traceElement("C07.ACTION.BUY_POINTS")) { Text("الانتقال إلى شراء النقاط") }
+    val canonicalActivationContractReady = false
+    val enabled = canonicalActivationContractReady && !state.mutationBusy && vm.online() && phoneId.isNotBlank() && days > 0 && daily > 0 && enough && subscriberReady
     Button(onClick = { confirm = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().traceElement("C07.ACTION.CONFIRM")) { Text(if (!vm.online()) "يلزم اتصال لتفعيل الحماية" else "مراجعة وتأكيد التفعيل") }
     if (numbers.isEmpty()) EmptyPanel("لا توجد أرقام غير محمية مرتبطة بحسابك. أضف رقمًا بعد توفر عقد الحفظ.")
     if (confirm) ConfirmAction("تأكيد تفعيل الحماية؟", "سيعيد الخادم احتساب التكلفة والرصيد، ثم يخصم النقاط وينشئ الحماية وخطة المهام في معاملة واحدة. التكلفة المقدرة: ${cost ?: "—"} نقطة.", { confirm = false }, {
@@ -500,6 +498,7 @@ private fun ExtendScreen(data: CustomerScreenData, state: CustomerUiState, vm: C
     val cost = com.aman.customer.data.activationCost(days, daily)
     val remaining = selected?.optString("expires_at").orEmpty()
     SectionTitle("تمديد الحماية", "الأيام تضاف إلى تاريخ الانتهاء الحالي، والتكلفة من Snapshot التعرفة المحفوظ للحماية.")
+    NoticeBanner("SQL_REVISION_REQUIRED: RPC extend_protection موجود بالاسم الكنسي لكن جسمه الحالي UNRESOLVED، لذلك لا نعرض تأكيدًا يوحي بنجاح الخصم أو التمديد.", true)
     SelectJsonItem("حماية نشطة مرتبطة بحسابك", protections, protectionId, { row ->
         val phone = row.optJSONObject("phone_numbers")?.optString("phone_e164").orEmpty()
         "$phone · ينتهي ${row.optString("expires_at").displayDate()}"
@@ -516,9 +515,10 @@ private fun ExtendScreen(data: CustomerScreenData, state: CustomerUiState, vm: C
     val enough = balance >= 0 && cost != null && balance >= cost
     if (cost != null && balance >= 0 && !enough) {
         NoticeBanner("الرصيد غير كافٍ. تحتاج $cost نقطة والمتاح $balance.", true)
-        OutlinedButton(onClick = { vm.navigate(CustomerScreen.POINTS) }) { Text("شراء نقاط") }
+        OutlinedButton(onClick = { vm.navigate(CustomerScreen.POINTS) }, modifier = Modifier.traceElement("C08.ACTION.BUY_POINTS")) { Text("شراء نقاط") }
     }
-    Button(onClick = { confirm = true }, enabled = !state.mutationBusy && vm.online() && protectionId.isNotBlank() && days > 0 && daily > 0 && enough, modifier = Modifier.fillMaxWidth().traceElement("C08.ACTION.CONFIRM")) { Text("مراجعة وتأكيد التمديد") }
+    val canonicalExtensionContractReady = false
+    Button(onClick = { confirm = true }, enabled = canonicalExtensionContractReady && !state.mutationBusy && vm.online() && protectionId.isNotBlank() && days > 0 && daily > 0 && enough, modifier = Modifier.fillMaxWidth().traceElement("C08.ACTION.CONFIRM")) { Text("مراجعة وتأكيد التمديد") }
     if (protections.isEmpty()) EmptyPanel("لا توجد حماية نشطة يملكها حسابك لتمديدها.")
     if (confirm) ConfirmAction("تأكيد تمديد الحماية؟", "سيخصم الخادم $cost نقطة ويضيف $days يومًا إلى تاريخ الانتهاء ثم يعيد بناء الخطة المستقبلية.", { confirm = false }, {
         confirm = false; vm.extend(protectionId, days)
@@ -529,7 +529,7 @@ private fun ExtendScreen(data: CustomerScreenData, state: CustomerUiState, vm: C
 private fun AlertListScreen(data: CustomerScreenData, vm: CustomerViewModel) {
     SectionTitle("تنبيهات الإدارة", "رسائل الإدارة منفصلة عن إشعارات النظام.")
     if (data.records.isEmpty()) EmptyPanel("لا توجد تنبيهات إدارية لحسابك.")
-    data.records.forEach { record -> DataCard(record, trailing = if (record.raw.isNull("read_at")) "غير مقروء" else "مقروء", onClick = { if (record.raw.isNull("read_at")) vm.markRead(record.id) }, traceId = "C09.LIST") }
+    data.records.forEach { record -> DataCard(record, trailing = if (!record.raw.optBoolean("is_read", false)) "غير مقروء" else "مقروء", onClick = { if (!record.raw.optBoolean("is_read", false)) vm.markRead(record.id) }, traceId = "C09.LIST") }
 }
 
 @Composable
@@ -595,9 +595,9 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
 
 @Composable
 private fun NotificationScreen(data: CustomerScreenData, vm: CustomerViewModel) {
-    SectionTitle("إشعارات النظام", "فتح إشعار غير مقروء يحدّث read_at على الخادم لمزامنته بين الأجهزة.")
+    SectionTitle("إشعارات النظام", "فتح إشعار غير مقروء يحدّث is_read/read_at عبر RPC الكنسي لمزامنته بين الأجهزة.")
     if (data.records.isEmpty()) EmptyPanel("لا توجد إشعارات نظام لحسابك.")
-    data.records.forEach { record -> DataCard(record, trailing = if (record.raw.isNull("read_at")) "جديد" else "مقروء", onClick = { if (record.raw.isNull("read_at")) vm.markRead(record.id) }, traceId = "C11.LIST") }
+    data.records.forEach { record -> DataCard(record, trailing = if (!record.raw.optBoolean("is_read", false)) "جديد" else "مقروء", onClick = { if (!record.raw.optBoolean("is_read", false)) vm.markRead(record.id) }, traceId = "C11.LIST") }
 }
 
 @Composable
@@ -692,6 +692,9 @@ private fun ReportRowCard(row: com.aman.customer.data.CustomerReportRow) {
 private fun AccountScreen(data: CustomerScreenData, vm: CustomerViewModel) {
     SectionTitle("حساب العميل", "بيانات الحساب من الملف المرتبط بهوية الدخول.")
     Text("ملف الحساب", Modifier.traceElement("C13.PROFILE"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+    Text("إعدادات الحساب", Modifier.traceElement("C13.ACCOUNT.SETTINGS"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+    NoticeBanner("DATABASE_CONTRACT_GAP: V7 يعرّف قسم إعدادات الحساب وإعدادات الأمان، لكن SQL الكنسي الحالي لا يعرّف RPC أو جداول آمنة لتغييرهما؛ لا نعرض أفعالًا وهمية.", true)
+    Text("إعدادات الأمان", Modifier.traceElement("C13.SECURITY.SETTINGS"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
     val profile = data.related["profile"]?.optJSONObject(0)
     val subscriber = data.related["subscriber"]?.optJSONObject(0)
     val balance = data.related["balance"]?.optJSONObject(0)?.optString("balance_points")
@@ -788,8 +791,8 @@ private fun fieldName(key: String) = mapOf(
     "points_per_day_snapshot" to "التعرفة وقت التفعيل", "total_points_snapshot" to "إجمالي نقاط الحماية", "points_amount_snapshot" to "النقاط المطلوبة",
     "price_amount_snapshot" to "المبلغ", "currency_snapshot" to "العملة", "payment_method_name_snapshot" to "وسيلة الدفع", "request_number" to "رقم الطلب",
     "submitted_at" to "تاريخ الإرسال", "reviewed_at" to "تاريخ المراجعة", "rejection_reason" to "سبب الرفض", "operation_type" to "نوع العملية",
-    "points_delta" to "تغير النقاط", "money_amount" to "المبلغ", "notification_type" to "نوع الإشعار", "title" to "العنوان", "content" to "المحتوى",
-    "read_at" to "تاريخ القراءة", "subject" to "الموضوع", "last_reply_at" to "آخر رد", "balance_points" to "الرصيد", "amount" to "النقاط",
+    "points_delta" to "تغير النقاط", "money_amount" to "المبلغ", "type" to "نوع الإشعار", "title" to "العنوان", "body" to "المحتوى",
+    "read_at" to "تاريخ القراءة", "subject" to "الموضوع", "updated_at" to "آخر تحديث", "balance_points" to "الرصيد", "amount_points" to "النقاط",
     "balance_after" to "الرصيد بعد الحركة", "entry_type" to "نوع الحركة", "description" to "التفاصيل", "name" to "الاسم", "points_amount" to "عدد النقاط",
     "price_amount" to "السعر", "currency" to "العملة", "instructions" to "التعليمات", "prefix" to "بادئة الشركة", "points_per_day" to "نقاط/يوم", "added_at" to "تاريخ الإضافة"
 )[key] ?: key

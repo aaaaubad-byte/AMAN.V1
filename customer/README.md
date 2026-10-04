@@ -33,8 +33,12 @@ SUPABASE_ANON_KEY=<public-anon-key>
 ## العقود المستخدمة من SQL المودع
 
 - Auth: Supabase email/password sign-in/sign-up، جلسات refresh/logout مشفرة محليًا.
-- Reads: `profiles`, `subscribers`, `customer_numbers`, `phone_numbers`, `telecom_providers`, `telecom_prefixes`, `provider_tariffs`, `points_packages`, `payment_methods`, `point_balances`, `points_purchase_requests`, `point_ledger`, `protections`, `operations`, `notifications`, `support_threads`, `support_messages`؛ كل القراءة المرتبطة بمستخدم تقيد بـ`auth.uid()`/RLS.
-- Mutations المعروفة: `submit_points_purchase`, `activate_protection`, `extend_protection`; وPATCH محدود لتعيين `notifications.read_at`.
+- Reads: `profiles`, `subscribers`, `customer_numbers`, `phone_numbers`, `telecom_providers`, `telecom_prefixes`, `provider_tariffs`, `points_packages`, `payment_methods`, `point_balances`, `points_purchase_requests`, `point_ledger`, `protections`, `operations`, `system_notifications`, `admin_notifications`, `support_threads`, `support_messages`؛ كل القراءة المرتبطة بمستخدم تقيد بـ`auth.uid()`/RLS.
+- Mutations المعروفة: `submit_points_purchase_request`, `activate_protection`, `extend_protection`; وRPC `mark_notification_read` لتعيين `system_notifications.is_read/read_at`.
 - جداول `payment_tasks` وخطة التشغيل الداخلية لا تُطلب أو تُعرض في تطبيق العميل.
 
 راجع `IMPLEMENTATION_BLOCKERS.md` و`../MANUS/PHASE_3_STATE.md` للقيود الواقعية في مخطط SQL الحالي. طلب شراء النقاط يمكن حفظه كـintent مشفر لكل مستخدم ثم إرساله عند عودة الاتصال؛ تميزه الواجهة عن طلب وصل Backend. التفعيل والتمديد وبقية العمليات الحساسة لا تنفذ أو تعد بالنجاح Offline.
+
+## حالة Customer Phase
+
+راجع `AMAN_CUSTOMER_PHASE_STATUS.md` لمصفوفة C01–C15، مسار كل Action من UI إلى RPC، وقيود `SQL_REVISION_REQUIRED` و`DATABASE_CONTRACT_GAP`. يسجل التطبيق إجراءات وأخطاء غير حساسة محليًا في `customer-action-errors.jsonl` لتجنب الصمت التشغيلي، ولا يسجل كلمات مرور أو رموز جلسات أو مراجع دفع.

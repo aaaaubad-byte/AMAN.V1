@@ -19,7 +19,7 @@ class CustomerContractException(message: String) : Exception(message)
 class CustomerBackendException(message: String) : Exception(message)
 internal data class CustomerSession(val accessToken: String, val refreshToken: String, val userId: String, val expiresAt: Long)
 
-/** Direct Supabase Auth/PostgREST client. It accepts the public anon key only; no privileged credential exists. */
+/** Supabase Auth/PostgREST client. Only the public anon key is accepted; service_role is forbidden. */
 class SupabaseGateway(context: Context) {
     private val baseUrl = BuildConfig.SUPABASE_URL.trimEnd('/')
     private val anonKey = BuildConfig.SUPABASE_ANON_KEY
@@ -32,16 +32,14 @@ class SupabaseGateway(context: Context) {
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
     }
 
-    fun isConfigured() = baseUrl.startsWith("https://") && anonKey.isNotBlank()
-    fun configurationMessage() = if (isConfigured()) null else "خدمة الدخول غير مهيأة. أعد البناء مع SUPABASE_URL وSUPABASE_ANON_KEY؛ لا تستخدم service_role."
+    fun isConfigured() = baseUrl.startsWith("https://") && anonKey.isNotBlank() && !anonKey.contains("service_role", true)
+    fun configurationMessage() = if (isConfigured()) null else "خدمة الدخول غير مهيأة أو تحتوي مفتاحًا غير مسموح. استخدم SUPABASE_URL وSUPABASE_ANON_KEY فقط."
     fun currentUserId(): String? = readSession()?.userId
     fun hasSession() = currentUserId() != null
-    fun isSessionFresh() = readSession()?.let { it.expiresAt > System.currentTimeMillis() } == true
 
     suspend fun signIn(email: String, password: String) = withContext(Dispatchers.IO) {
         ensureConfigured()
-        val result = JSONObject(raw("/auth/v1/token?grant_type=password", "POST", JSONObject().put("email", email.trim()).put("password", password).toString()))
-        persist(fromAuth(result))
+        persist(fromAuth(JSONObject(raw("/auth/v1/token?grant_type=password", "POST", JSONObject().put("email", email.trim()).put("password", password).toString()))))
     }
 
     suspend fun signUp(email: String, password: String, fullName: String) = withContext(Dispatchers.IO) {
@@ -49,8 +47,7 @@ class SupabaseGateway(context: Context) {
         val payload = JSONObject().put("email", email.trim()).put("password", password)
             .put("data", JSONObject().put("full_name", fullName.trim()))
         val result = JSONObject(raw("/auth/v1/signup", "POST", payload.toString()))
-        val access = result.optString("access_token")
-        if (access.isNotBlank()) persist(fromAuth(result))
+        if (result.optString("access_token").isNotBlank()) persist(fromAuth(result))
         result
     }
 
@@ -60,20 +57,15 @@ class SupabaseGateway(context: Context) {
         request(urlBuilder.build().toString(), "GET", null, authenticatedToken())
     }
 
+    /** Only RPCs in the V7/Phase-1 customer contract may pass this gate. */
     suspend fun rpc(name: String, arguments: JSONObject): String = withContext(Dispatchers.IO) {
         val allowed = setOf(
-            "submit_points_purchase", "activate_protection", "extend_protection",
-            "add_customer_number", "update_customer_number", "archive_customer_number",
+            "create_profile_if_missing", "add_customer_number", "submit_points_purchase_request",
+            "activate_protection", "extend_protection", "renew_protection", "mark_notification_read",
             "create_support_thread", "send_support_message",
         )
-        if (name !in allowed) throw CustomerContractException("عملية Backend غير معرّفة للعميل: $name")
+        if (name !in allowed) throw CustomerContractException("عملية Backend غير معرّفة في عقد V7: $name")
         request("$baseUrl/rest/v1/rpc/$name", "POST", arguments.toString(), authenticatedToken())
-    }
-
-    suspend fun markNotificationRead(id: String) = withContext(Dispatchers.IO) {
-        if (id.isBlank()) throw CustomerContractException("معرّف الإشعار غير متاح.")
-        val url = "$baseUrl/rest/v1/notifications?id=eq.$id".toHttpUrl().newBuilder().build().toString()
-        request(url, "PATCH", JSONObject().put("read_at", java.time.Instant.now().toString()).toString(), authenticatedToken(), "return=minimal")
     }
 
     suspend fun signOut() = withContext(Dispatchers.IO) {
@@ -88,11 +80,10 @@ class SupabaseGateway(context: Context) {
         val old = readSession() ?: throw CustomerContractException("لا توجد جلسة دخول؛ سجّل الدخول مجددًا.")
         if (old.expiresAt > System.currentTimeMillis() + 60_000L) return old.accessToken
         return try {
-            val result = JSONObject(raw("/auth/v1/token?grant_type=refresh_token", "POST", JSONObject().put("refresh_token", old.refreshToken).toString()))
-            val refreshed = fromAuth(result, old)
+            val refreshed = fromAuth(JSONObject(raw("/auth/v1/token?grant_type=refresh_token", "POST", JSONObject().put("refresh_token", old.refreshToken).toString())), old)
             persist(refreshed)
             refreshed.accessToken
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             prefs.edit().clear().apply()
             throw CustomerContractException("انتهت جلسة الدخول وتعذر تجديدها. أعد تسجيل الدخول.")
         }
@@ -108,7 +99,6 @@ class SupabaseGateway(context: Context) {
         when (method) {
             "GET" -> builder.get()
             "POST" -> builder.post((body ?: "{}").toRequestBody(jsonType))
-            "PATCH" -> builder.patch((body ?: "{}").toRequestBody(jsonType))
             else -> throw CustomerContractException("HTTP method غير مدعوم: $method")
         }
         try {
@@ -130,9 +120,7 @@ class SupabaseGateway(context: Context) {
         return CustomerSession(obj.getString("access_token"), obj.optString("refresh_token", previous?.refreshToken.orEmpty()), userId,
             System.currentTimeMillis() + obj.optLong("expires_in", 3600L) * 1000L)
     }
-    private fun persist(session: CustomerSession) {
-        prefs.edit().putString("access", session.accessToken).putString("refresh", session.refreshToken).putString("uid", session.userId).putLong("expires", session.expiresAt).apply()
-    }
+    private fun persist(session: CustomerSession) { prefs.edit().putString("access", session.accessToken).putString("refresh", session.refreshToken).putString("uid", session.userId).putLong("expires", session.expiresAt).apply() }
     private fun readSession(): CustomerSession? {
         val access = prefs.getString("access", null) ?: return null
         val refresh = prefs.getString("refresh", null) ?: return null

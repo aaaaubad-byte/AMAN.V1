@@ -62,9 +62,9 @@ class CustomerContractsTest {
     }
     @Test fun reportFiltersRealRowsByCategoryAndInclusiveDateRange() {
         val ledger = JSONArray()
-            .put(JSONObject().put("id", "a").put("entry_type", "credit").put("amount", 10).put("created_at", "2026-04-01T12:00:00Z"))
-            .put(JSONObject().put("id", "b").put("entry_type", "debit").put("amount", -3).put("created_at", "2026-04-02T12:00:00Z"))
-            .put(JSONObject().put("id", "c").put("entry_type", "credit").put("amount", 99).put("created_at", "2026-04-03T12:00:00Z"))
+            .put(JSONObject().put("id", "a").put("entry_type", "credit").put("amount_points", 10).put("created_at", "2026-04-01T12:00:00Z"))
+            .put(JSONObject().put("id", "b").put("entry_type", "debit").put("amount_points", -3).put("created_at", "2026-04-02T12:00:00Z"))
+            .put(JSONObject().put("id", "c").put("entry_type", "credit").put("amount_points", 99).put("created_at", "2026-04-03T12:00:00Z"))
         val data = CustomerScreenData(CustomerScreen.REPORTS, related = mapOf("ledger" to ledger))
         assertTrue(isValidCustomerReportRange("2026-04-01", "2026-04-02"))
         assertFalse(isValidCustomerReportRange("2026-04-03", "2026-04-01"))

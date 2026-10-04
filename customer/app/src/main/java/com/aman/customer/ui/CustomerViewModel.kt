@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.aman.customer.data.CustomerCache
 import com.aman.customer.data.CustomerBackendException
+import com.aman.customer.data.CustomerActionLog
 import com.aman.customer.data.CustomerRepository
 import com.aman.customer.data.CustomerScreen
 import com.aman.customer.data.CustomerScreenData
@@ -31,6 +32,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
     val gateway = SupabaseGateway(appContext)
     private val cache = CustomerCache(appContext)
     private val repository = CustomerRepository(appContext, gateway, cache)
+    private val actionLog = CustomerActionLog(appContext)
     private val _state = MutableStateFlow(CustomerUiState(authenticated = gateway.hasSession()))
     val state: StateFlow<CustomerUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
@@ -51,6 +53,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
 
     fun setSignUpMode(enabled: Boolean) { _state.value = _state.value.copy(signUpMode = enabled, authError = null, authNotice = null) }
     fun authenticate(email: String, password: String, fullName: String = "") {
+        actionLog.record(if (_state.value.signUpMode) "auth.signup" else "auth.signin", "start")
         viewModelScope.launch {
             _state.value = _state.value.copy(authBusy = true, authError = null, authNotice = null)
             try {
@@ -58,8 +61,16 @@ class CustomerViewModel(context: Context) : ViewModel() {
                     if (fullName.isBlank()) throw IllegalArgumentException("أدخل الاسم.")
                     val result = withContext(Dispatchers.IO) { gateway.signUp(email, password, fullName) }
                     if (gateway.hasSession()) {
+                        withContext(Dispatchers.IO) {
+                            val username = email.substringBefore('@').trim().ifBlank { "customer_${gateway.currentUserId()?.take(8).orEmpty()}" }
+                            gateway.rpc("create_profile_if_missing", org.json.JSONObject()
+                                .put("p_full_name", fullName.trim())
+                                .put("p_username", username)
+                                .put("p_email", email.trim()))
+                        }
+                        actionLog.record("auth", "success")
                         _state.value = _state.value.copy(authenticated = true, authBusy = false,
-                            authNotice = "تم إنشاء جلسة المصادقة. يُنشأ ملف العميل ورصيد النقاط بواسطة trigger الخلفية؛ راجع شاشة الحساب بعد الدخول.")
+                            authNotice = "تم إنشاء الحساب وملف العميل ورصيد النقاط عبر العقد الكنسي.")
                         scheduleCustomerRefresh(appContext)
                         scheduleCustomerOneTimeRefresh(appContext)
                         load(CustomerScreen.HOME)
@@ -70,18 +81,21 @@ class CustomerViewModel(context: Context) : ViewModel() {
                     @Suppress("UNUSED_VARIABLE") val signupResponse = result
                 } else {
                     withContext(Dispatchers.IO) { gateway.signIn(email, password) }
+                    actionLog.record("auth", "success")
                     _state.value = _state.value.copy(authenticated = true, authBusy = false, authNotice = null)
                     scheduleCustomerRefresh(appContext)
                     scheduleCustomerOneTimeRefresh(appContext)
                     load(CustomerScreen.HOME)
                 }
             } catch (e: Exception) {
+                actionLog.record("auth", "error", e.message)
                 _state.value = _state.value.copy(authBusy = false, authError = authMessage(e.message))
             }
         }
     }
 
     fun navigate(screen: CustomerScreen) {
+        actionLog.record("navigate.${screen.id}", "start")
         loadJob?.cancel()
         _state.value = _state.value.copy(screen = screen, mutationMessage = null, error = null)
         if (screen == CustomerScreen.ABOUT) {
@@ -90,6 +104,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
     }
 
     fun search(query: String) {
+        actionLog.record("search", "input", "length=${query.length}")
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             delay(350)
@@ -125,6 +140,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
     }
 
     fun submitPurchase(packageId: String, methodId: String, reference: String) {
+        actionLog.record("purchase.submit", "start")
         viewModelScope.launch {
             _state.value = _state.value.copy(mutationBusy = true, mutationMessage = null)
             var idempotencyKey = ""
@@ -152,31 +168,36 @@ class CustomerViewModel(context: Context) : ViewModel() {
                     return@launch
                 }
                 repository.submitPurchase(packageId, methodId, reference, idempotencyKey)
+                actionLog.record("purchase.submit", "success")
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = "وصل طلب الشراء إلى الخادم للمراجعة؛ لم تُضف النقاط بعد.")
                 load(_state.value.screen)
             } catch (e: CustomerBackendException) {
+                actionLog.record("purchase.submit", "error", e.message)
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = mutationMessage(e.message))
             } catch (e: IOException) {
+                actionLog.record("purchase.submit", "offline", e.message)
                 repository.queuePurchase(packageId, methodId, reference, idempotencyKey)
                 _state.value = _state.value.copy(mutationBusy = false,
                     mutationMessage = "انقطع الاتصال قبل تأكيد نتيجة الخادم؛ حُفظ الطلب محليًا بنفس مفتاح التكرار ولم تُضف نقاط. تحقق من سجل الطلبات بعد المزامنة.")
                 scheduleCustomerOneTimeRefresh(appContext)
                 load(_state.value.screen)
             } catch (e: Exception) {
+                actionLog.record("purchase.submit", "error", e.message)
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = mutationMessage(e.message))
             }
         }
     }
-    fun activate(phoneId: String, days: Int) = mutate("تم التحقق من طلب التفعيل وتنفيذه عبر الخادم.") { repository.activate(phoneId, days) }
-    fun extend(protectionId: String, days: Int) = mutate("تم التحقق من طلب التمديد وتنفيذه عبر الخادم.") { repository.extend(protectionId, days) }
-    fun markRead(notificationId: String) = mutate("تم تحديث حالة قراءة الإشعار.") { repository.markRead(notificationId) }
-    fun addCustomerNumber(phoneE164: String) = mutate("تمت إضافة الرقم إلى حسابك.") { repository.addCustomerNumber(phoneE164) }
-    fun updateCustomerNumber(customerNumberId: String, phoneE164: String) = mutate("تم تحديث الرقم.") { repository.updateCustomerNumber(customerNumberId, phoneE164) }
-    fun archiveCustomerNumber(customerNumberId: String) = mutate("تمت أرشفة الرقم.") { repository.archiveCustomerNumber(customerNumberId) }
-    fun createSupportThread(subject: String, body: String) = mutate("تم إرسال الرسالة وإنشاء محادثة الدعم.") { repository.createSupportThread(subject, body) }
-    fun sendSupportMessage(threadId: String, body: String) = mutate("تم إرسال الرسالة إلى المحادثة.") { repository.sendSupportMessage(threadId, body) }
+    fun activate(activatedNumberId: String, days: Int) = mutate("activate_protection", "تم إرسال طلب التفعيل إلى العقد الكنسي.") { repository.activate(activatedNumberId, days) }
+    fun extend(protectionId: String, days: Int) = mutate("extend_protection", "تم إرسال طلب التمديد إلى العقد الكنسي.") { repository.extend(protectionId, days) }
+    fun markRead(notificationId: String) = mutate("mark_notification_read", "تم تحديث حالة قراءة الإشعار.") { repository.markRead(notificationId) }
+    fun addCustomerNumber(phoneE164: String) = mutate("add_customer_number", "تمت إضافة الرقم إلى حسابك.") { repository.addCustomerNumber(phoneE164) }
+    fun updateCustomerNumber(customerNumberId: String, phoneE164: String) = mutate("DATABASE_CONTRACT_GAP.update_number", "تم تحديث الرقم.") { repository.updateCustomerNumber(customerNumberId, phoneE164) }
+    fun archiveCustomerNumber(customerNumberId: String) = mutate("DATABASE_CONTRACT_GAP.archive_number", "تمت أرشفة الرقم.") { repository.archiveCustomerNumber(customerNumberId) }
+    fun createSupportThread(subject: String, body: String) = mutate("create_support_thread", "تم إرسال الرسالة وإنشاء محادثة الدعم.") { repository.createSupportThread(subject, body) }
+    fun sendSupportMessage(threadId: String, body: String) = mutate("send_support_message", "تم إرسال الرسالة إلى المحادثة.") { repository.sendSupportMessage(threadId, body) }
 
     fun openSupportThread(threadId: String) {
+        actionLog.record("support.open_thread", "start")
         val current = _state.value.data ?: return
         if (_state.value.screen != CustomerScreen.SUPPORT || threadId.isBlank()) return
         _state.value = _state.value.copy(data = current.copy(selectedThreadId = threadId, messagesLoading = true), error = null)
@@ -205,29 +226,35 @@ class CustomerViewModel(context: Context) : ViewModel() {
         if (_state.value.screen == CustomerScreen.SUPPORT) _state.value = _state.value.copy(data = current.copy(selectedThreadId = null))
     }
 
-    private fun mutate(success: String, action: suspend () -> Unit) {
+    private fun mutate(actionName: String, success: String, action: suspend () -> Unit) {
+        actionLog.record(actionName, "start")
         viewModelScope.launch {
             if (!repository.isOnline()) {
+                actionLog.record(actionName, "offline")
                 _state.value = _state.value.copy(mutationMessage = "لا يمكن تنفيذ عملية حساسة دون اتصال. لم تُسجل العملية محليًا.")
                 return@launch
             }
             _state.value = _state.value.copy(mutationBusy = true, mutationMessage = null)
             try {
                 action()
+                actionLog.record(actionName, "success")
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = success)
                 load(_state.value.screen)
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
+                actionLog.record(actionName, "error", e.message)
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = mutationMessage(e.message))
             }
         }
     }
 
     fun signOut() {
+        actionLog.record("auth.signout", "start")
         viewModelScope.launch {
             val user = gateway.currentUserId()
             runCatching { gateway.signOut() }
             if (user != null) withContext(Dispatchers.IO) { cache.clearUser(user) }
+            actionLog.record("auth.signout", "success")
             _state.value = CustomerUiState()
         }
     }

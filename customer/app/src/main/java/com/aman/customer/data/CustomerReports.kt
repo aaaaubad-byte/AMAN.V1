@@ -42,7 +42,7 @@ fun buildCustomerReportRows(
     if (!isValidCustomerReportRange(fromDate, toDate)) return emptyList()
     val rows = when (category) {
         CustomerReportCategory.POINTS -> data.related.array("ledger").objects().map { row ->
-            CustomerReportRow(row.optString("id"), category.label, row.optString("entry_type"), row.optString("created_at"), "", row.opt("amount").plain(), "", "", row.optString("description").ifBlank { row.optString("reference_type") })
+            CustomerReportRow(row.optString("id"), category.label, row.optString("entry_type"), row.optString("created_at"), "", row.opt("amount_points").plain(), "", "", row.optString("description").ifBlank { row.optString("reference_type") })
         }
         CustomerReportCategory.PURCHASES -> data.related.array("purchases").objects().map { row ->
             CustomerReportRow(row.optString("id"), category.label, row.optString("request_number").ifBlank { "طلب شراء نقاط" }, row.optString("submitted_at"), row.optString("status"), row.optString("points_amount_snapshot"), row.optString("price_amount_snapshot"), row.optString("currency_snapshot"), row.optString("rejection_reason"))
