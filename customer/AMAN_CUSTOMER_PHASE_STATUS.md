@@ -1,62 +1,55 @@
 # AMAN Customer Phase Status
 
-**التاريخ:** 2026-10-05
-**النطاق:** `customer/` فقط — لم يبدأ تنفيذ Admin ولم يُعدّل `database/AMAN_V7_DATABASE.sql`.
+**التاريخ:** 2026-10-05  
+**النطاق:** Customer (`customer/`) ومراجعة/تحديث العقد الكنسي الجديد `database/AMAN_V7_DATABASE.sql` بعد إذن المستخدم. لم يبدأ تنفيذ Admin، ولم تُستخدم ملفات SQL التاريخية كـfallback.
 
 ## النتيجة التنفيذية
 
-تم تنفيذ ومراجعة مسار Customer من واجهة Compose إلى Repository وSupabase Auth/PostgREST/RPC، مع إزالة عقود Customer القديمة وعدم استخدام أي fallback قديم. كل استجابة غير مؤكدة تبقى خطأً ظاهرًا ولا تُعرض كنجاح.
+أُجريت إصلاحات متصلة من Compose إلى Repository وSupabase Auth/PostgREST/RPC/SQL. **هذه المراجعة لا تدّعي اكتمال Customer Phase نهائيًا**: لم يتوفر Android SDK لاختبار بناء Kotlin، ولم يُنفذ SQL على Supabase/PostgreSQL فعلي، وما زالت عقود محرك المهام والتقييم الحي وعمليات قبول كاملة غير متحققة. لم يُعرض نجاح عملية كتابة قبل استجابة الخادم.
 
-تمت إضافة:
+## التغييرات المنفذة
 
-- مطابقة الجداول والأعمدة الكنسية: `system_notifications`, `amount_points`, `account_identifier`, `activated_number_id`, `p_extension_days`.
-- مطابقة RPCs الكنسية: `create_profile_if_missing`, `add_customer_number`, `submit_points_purchase_request`, `mark_notification_read`, `create_support_thread`, `send_support_message`, `activate_protection`, `extend_protection`.
-- إنشاء ملف العميل ورصيد النقاط بعد التسجيل عبر `create_profile_if_missing` بدل الاعتماد على trigger غير موجود في SQL الحالي.
-- طابور شراء نقاط مشفّر لكل مستخدم، idempotency key مرتبط بالطلب، وحماية من الإرسال المكرر.
-- تحقق E.164 والبادئة الأطول، تحقق الرصيد/التعرفة/المدة، تأكيدات العمليات الحساسة، وحالات loading/offline/stale/error.
-- سجل محلي غير حساس للإجراءات والأخطاء في `customer-action-errors.jsonl` مع redaction للقيم الحساسة، لتشخيص كل Auth/navigation/search/mutation/support action.
-- تصدير تقارير CSV مع تحييد Formula Injection.
-- تحديث `CustomerUiTraceability` ليعكس العقد الكنسي والفجوات الفعلية.
+- تنقل رجوعي فعلي مع زر Back للنظام، تمييز التنقل الجذري للتبويبات، وأوامر تحديث للشاشات الفرعية.
+- فصل حالات التحميل/offline/empty/error والبيانات القديمة جزئيًا، وإرجاع المستخدم للدخول عند اكتشاف انتهاء/رفض JWT.
+- سجل مهام محدود للعميل لا يعرض المبالغ أو تفاصيل التشغيل الحساسة.
+- تفعيل/تمديد/تجديد حماية ذري في SQL مع قفل الرصيد، تكلفة خادمية، ledger/operations، idempotency، إشعار، audit، وإنشاء/إعادة بناء خطة المهام؛ بدء حماية جديدة يعيد استعمال كيان `activated_numbers` غير النشط وينشئ X عند أول تفعيل.
+- تحديث/أرشفة علاقة الرقم عبر RPCs ملكية ذات تحقق من البادئات والتكرار والهوية التاريخية.
+- إنشاء مرشحي التفعيل غير النشط عند إضافة الرقم أو اعتماد اشتراك العميل، مع سياسات RLS وقراءة كتالوج provider/tariff للعملاء.
+- مسارات شراء النقاط تميز idempotency عن O code، وتدعم عرض pending وإلغاء الطلب المعلق وإعادة الطلب المرفوض مع الاحتفاظ برقم O. اعتماد الطلب ينفذ تحديث الرصيد والدفاتر والعملية والإشعار في المعاملة.
+- إرسال إشعار الإدارة ينشئ إشعارًا موجهًا للمستخدم عبر `system_notifications` بالإضافة إلى سجل الإرسال.
+- تحديث ملف العميل عبر RPC يقيّد التعديل بـ`auth.uid()` ويسجل audit؛ تحديث كلمة المرور يمر مباشرة إلى Supabase Auth ولا يكتبها في قاعدة AMAN.
+- إزالة AlertDialog من تفاصيل الصف والتأكيدات المشتركة لصالح واجهات inline، وإضافة سياق تنقل لنتائج البحث.
+- مراجعة سجل عناصر UI لتحديث إجراءات C04/C06/C07/C08/C13.
+- ترك ملفات Admin وSQL التاريخية دون تعديل.
 
-## مصفوفة الشاشات
+## حالة الشاشات
 
-| الشاشة | UI / Smart Logic / State | Repository / Backend | الحالة |
-|---|---|---|---|
-| C01 الرئيسية | profile، balance، unread، admin alerts، recent operations، protection summary، navigation | قراءات RLS للمستخدم الحالي | مكتملة ضمن العقد |
-| C02 الأرقام المفعلة | قائمة تفاصيل الحماية، انتهاء/مدة متبقية، نسخ، تفاصيل | `protections` عبر `activated_numbers → customer_numbers` | مكتملة قرائيًا |
-| C03 الأرقام غير المفعلة | تصفية الأرقام التي لا تملك حماية نشطة، نسخ وتفاصيل | `customer_numbers` + ownership relation | مكتملة قرائيًا |
-| C04 إضافة نقاط | package/method selectors، account/instructions، reference، review dialog، pending/outbox | `submit_points_purchase_request` | مكتملة |
-| C05 العمليات | search، type/status/date filters، validation، details، empty/error | operations + point ledger + purchases + numbers | مكتملة |
-| C06 إضافة رقم | E.164، أطول prefix، duplicate، online-only، add confirmation | `add_customer_number` | الإضافة مكتملة؛ التعديل/الأرشفة فجوة SQL موثقة |
-| C07 تفعيل رقم | duration، tariff/cost/balance calculation، insufficient balance، confirmation path | RPC الكنسي موجود اسميًا لكن SQL body `UNRESOLVED` ومدخلاته لا تدعم first activation | `SQL_REVISION_REQUIRED` — الزر معطل لمنع عملية خاطئة |
-| C08 تمديد رقم | protection selector، snapshot tariff، cost/new expiry calculation، confirmation path | RPC الكنسي موجود اسميًا لكن SQL body `UNRESOLVED` | `SQL_REVISION_REQUIRED` — الزر معطل |
-| C09 تنبيهات الإدارة | list، read state، details، synchronize read | `system_notifications`, `mark_notification_read` | مكتملة |
-| C10 التواصل | new thread، reply، open/closed state، refresh، uncertain-send guard، messages | `support_threads`, `support_messages`, create/send RPCs | مكتملة |
-| C11 إشعارات النظام | list، read state، details، synchronize read | `system_notifications`, `mark_notification_read` | مكتملة |
-| C12 التقارير | category/quick range/date validation/view/refresh/results/export | user-scoped ledger/purchases/protections/operations/numbers | مكتملة |
-| C13 الحساب | profile/subscriber/balance/logout، settings/security visibility | profile/subscriber/balance/Auth | settings/security actions `DATABASE_CONTRACT_GAP` |
-| C14 البحث | debounce، sanitization، server-side filters، local result synthesis، clear | user-scoped numbers/operations/purchases/system notifications | مكتملة |
-| C15 عن أمان | identity/service information | static repository copy | مكتملة |
+التغطية البصرية والوظيفية الجزئية في الكود لا تساوي قبولًا نهائيًا. النقاط التي تتطلب مراجعة لاحقة:
 
-## الفجوات الصريحة
+| المجموعة | الحالة بعد هذا التعديل |
+|---|---|
+| C01–C03 | تحسين الرجوع/التحديث وملخص المهام؛ يلزم تحقق عرض وبيانات runtime |
+| C04 | شراء، إلغاء pending، إعادة تقديم rejected؛ يلزم اختبار تنافسي وRLS حي |
+| C05 | بحث/فلاتر وسجل فعلي؛ يلزم مطابقة كل عنصر في V7 واختبار عرض |
+| C06–C08 | إضافة/تعديل/أرشفة الرقم والتفعيل/التمديد/التجديد موصولة بـSQL الجديد؛ من دون تنفيذ حي أو قبول معاملات |
+| C09–C11 | قراءة الإشعارات/الدعم وتغيير حالة القراءة؛ لم تُختبر على Supabase حية |
+| C12–C15 | التقارير والتصدير والملف الشخصي وتغيير كلمة المرور والبحث/المعلومات؛ يلزم اختبار واجهة وتدفق Auth حي |
 
-### `SQL_REVISION_REQUIRED`
+## ما بقي غير محسوم/غير متحقق
 
-1. **First activation lifecycle:** V7 يتطلب أن يبدأ التفعيل من `customer_numbers` ثم ينشئ `activated_numbers` ويُنشئ الحماية والخطة/العمليات ذريًا. SQL الحالي يعرّف `activate_protection(p_activated_number_id, ...)` فقط، وbody الحالي يرفع `UNRESOLVED` ولا ينشئ المرشح.
-2. **Protection extension:** `extend_protection` موجود بالاسم والتوقيع الكنسي، لكن body الحالي يرفع `UNRESOLVED`، لذلك لا يُسمح للعميل بعرض نجاح أو إرسال تأكيد تنفيذي.
+### `UNRESOLVED` في عقد قاعدة البيانات (ليس ضمن مسار عميل مكتمل)
 
-### `DATABASE_CONTRACT_GAP`
+- `reschedule_payment_task`, `execute_payment_task`, و`cancel_payment_task` ما زالت placeholders صريحة في SQL؛ لم تُبتكر سياسة تشغيل/ترحيل مالية.
+- `admin_adjust_points` ما زال يطلب قيمة مالية موثوقة لكل نقطة غير معرفة في V7.
+- لم تُنفذ قاعدة SQL على بيئة PostgreSQL/Supabase، لذلك لا تُدّعى صحة تنفيذ PL/pgSQL أو RLS/runtime أو القفل والتراجع تحت التنافس.
 
-1. V7 يطلب تعديل علاقة الرقم وأرشفتها في C06، لكن SQL الحالي لا يعرّف RPC كنسيًا لـ update/archive؛ Customer يعرض السبب ولا يستدعي RPC قديمًا.
-2. V7 يعرّف أقسام إعدادات الحساب والأمان في C13، لكن SQL الحالي لا يعرّف جداول أو RPC آمنًا لتغييرها؛ لذلك تظهر كحالة غير مدعومة دون أفعال وهمية.
+### `NOT VERIFIED`
 
-### `UNRESOLVED`
+- **BUILD = NOT VERIFIED**. أمر `./gradlew :app:testDebugUnitTest --no-daemon` توقف قبل Kotlin compilation لأن `ANDROID_HOME` و`local.properties sdk.dir` غير موجودين: `SDK location not found`.
+- تم فحص صياغة SQL الخارجية بواسطة PostgreSQL parser (`pglast`): نجح تحليل 166 statement. هذا **لا** يثبت صحة أجسام PL/pgSQL وقت التنفيذ أو توافق المخطط مع Supabase.
+- لم يتم اختبار رحلة شراء فعلية أو خصم نقاط أو Auth password update أو تشغيل RPC على حساب حقيقي.
+- راجع/أكمل اختبار كل عنصر في V7، بما فيه حالات إعادة المحاولة والتزامن والرجوع، ثم شغّل T01–T22 على قاعدة اختبار مصرح بها قبل اعتبار المرحلة مقبولة للنشر.
 
-- لا توجد إضافة خارج V7. أي سلوك غير مغطى بعقد V7 أو SQL لم يُخترع له API داخل Customer.
+## صلاحية التغيير
 
-## التحقق
-
-- فحص ثابت: كل `gateway.rpc(...)` المستخدم في Customer معرف في `AMAN_V7_DATABASE.sql`؛ لا توجد استدعاءات RPC قديمة مثل `submit_points_purchase` أو `update_customer_number` أو `archive_customer_number`.
-- `git diff --check`: مطلوب تشغيله قبل commit النهائي.
-- اختبار Gradle: تعذر الوصول إلى مرحلة Kotlin/Android لأن Plugin `com.android.application:8.7.3` غير متوفر في بيئة Gradle offline الحالية؛ هذه قيد بيئي، وليست نتيجة اختبار فاشل من كود Customer.
-- لم يتم تشغيل SQL على Supabase حقيقية، وفق قيد مرحلة قاعدة البيانات السابقة؛ لا يُدّعى اتصال إنتاجي أو APK صالح للنشر.
+كان المرفق الأصلي يمنع تعديل SQL؛ لاحقًا صرّح المستخدم في المحادثة: **«عدل قاعدة البيانات لا مشكلة»**، وبناءً على ذلك تم تعديل **الملف الكنسي الجديد فقط** `database/AMAN_V7_DATABASE.sql`.

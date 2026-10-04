@@ -113,15 +113,15 @@ create table public.customer_numbers (
   unique(user_id,phone_number_id)
 );
 create table public.activated_numbers (
-  id uuid primary key default gen_random_uuid(), activation_code text not null unique,
+  id uuid primary key default gen_random_uuid(), activation_code text unique,
   customer_number_id uuid not null references public.customer_numbers(id) on delete restrict,
   subscriber_id uuid not null references public.subscribers(id) on delete restrict,
-  current_protection_id uuid unique, status public.activated_number_status not null default 'active',
-  activated_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  current_protection_id uuid unique, status public.activated_number_status not null default 'inactive',
+  activated_at timestamptz, updated_at timestamptz not null default now(),
   unique(customer_number_id,subscriber_id)
 );
 create table public.points_purchase_requests (
-  id uuid primary key default gen_random_uuid(), request_number text not null unique,
+  id uuid primary key default gen_random_uuid(), request_number text not null unique, idempotency_key text not null unique,
   user_id uuid not null references public.profiles(id) on delete restrict,
   subscriber_id uuid references public.subscribers(id) on delete set null,
   package_id uuid not null references public.points_packages(id) on delete restrict,
@@ -139,7 +139,7 @@ create table public.point_balances (
   updated_at timestamptz not null default now(), check(balance_points >= 0)
 );
 create table public.operations (
-  id uuid primary key default gen_random_uuid(), operation_type text not null, status text not null,
+  id uuid primary key default gen_random_uuid(), idempotency_key text unique, operation_type text not null, status text not null,
   reference_type text, reference_id uuid, user_id uuid references public.profiles(id) on delete set null,
   subscriber_id uuid references public.subscribers(id) on delete set null, phone_number_id uuid references public.phone_numbers(id) on delete set null,
   points_delta bigint, money_amount numeric(14,2), metadata jsonb not null default '{}', created_at timestamptz not null default now()
@@ -166,6 +166,7 @@ create table public.protection_extensions (
   subscriber_id uuid not null references public.subscribers(id) on delete restrict, days_added integer not null,
   points_per_day_snapshot integer not null, points_cost bigint not null, expires_at_before timestamptz not null, expires_at_after timestamptz not null,
   point_ledger_id uuid not null references public.point_ledger(id) on delete restrict, operation_id uuid references public.operations(id) on delete set null,
+  idempotency_key text not null unique,
   created_at timestamptz not null default now(), check(days_added > 0), check(points_per_day_snapshot > 0), check(points_cost > 0), check(expires_at_after > expires_at_before)
 );
 
@@ -283,49 +284,385 @@ begin insert into public.audit_logs(actor_user_id,actor_role,action,entity_type,
 -- Canonical RPC set. Bodies use row locks and are intentionally server authoritative.
 create or replace function public.create_profile_if_missing(p_full_name text,p_username text,p_phone text default null,p_email text default null) returns public.profiles language plpgsql security definer set search_path=public,pg_temp as $$
 declare v public.profiles;
-begin if auth.uid() is null then raise exception 'not_authenticated'; end if;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ if nullif(trim(p_full_name),'') is null or nullif(trim(p_username),'') is null then raise exception 'profile_name_and_username_required'; end if;
  select * into v from public.profiles where id=auth.uid() for update;
- if not found then insert into public.profiles(id,user_code,full_name,username,phone,email) values(auth.uid(),public.next_public_code('profiles','user_code','U'),trim(p_full_name),trim(p_username),nullif(trim(p_phone),''),nullif(trim(p_email),'')) returning * into v; insert into public.point_balances(user_id) values(auth.uid()); else update public.profiles set full_name=trim(p_full_name),username=trim(p_username),phone=nullif(trim(p_phone),''),email=nullif(trim(p_email),'') where id=auth.uid() returning * into v; end if; return v; end $$;
+ if found then return v; end if;
+ insert into public.profiles(id,user_code,full_name,username,phone,email)
+ values(auth.uid(),public.next_public_code('profiles','user_code','U'),trim(p_full_name),trim(p_username),nullif(trim(p_phone),''),nullif(trim(p_email),'')) returning * into v;
+ insert into public.point_balances(user_id) values(auth.uid());
+ return v;
+end $$;
+create or replace function public.update_customer_profile(p_full_name text,p_username text,p_phone text default null) returns public.profiles language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.profiles;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ if nullif(trim(p_full_name),'') is null or nullif(trim(p_username),'') is null then raise exception 'profile_name_and_username_required'; end if;
+ if p_phone is not null and nullif(trim(p_phone),'') is not null and trim(p_phone) !~ '^\+?[0-9 ()-]{7,20}$' then raise exception 'invalid_profile_phone'; end if;
+ select * into v from public.profiles where id=auth.uid() for update;
+ if not found then raise exception 'profile_not_found'; end if;
+ if exists(select 1 from public.profiles where username=trim(p_username) and id<>auth.uid()) then raise exception 'username_unavailable'; end if;
+ update public.profiles set full_name=trim(p_full_name),username=trim(p_username),phone=nullif(trim(p_phone),'') where id=auth.uid() returning * into v;
+ perform public.write_audit('update_customer_profile','profile',v.id,null,to_jsonb(v));
+ return v;
+end $$;
 create or replace function public.add_customer_number(p_phone_e164 text) returns public.customer_numbers language plpgsql security definer set search_path=public,pg_temp as $$
-declare v_provider uuid; v_phone public.phone_numbers; v public.customer_numbers; v_norm text;
-begin if auth.uid() is null then raise exception 'not_authenticated'; end if; v_norm:=regexp_replace(coalesce(p_phone_e164,''),'[^0-9+]','','g'); if v_norm !~ '^\+[0-9]{7,15}$' then raise exception 'invalid_phone'; end if;
- select provider_id into v_provider from public.telecom_prefixes where status='active' and v_norm like prefix||'%' order by length(prefix) desc limit 1; if v_provider is null then raise exception 'unknown_phone_prefix'; end if;
- insert into public.phone_numbers(phone_e164,normalized_phone,provider_id) values(v_norm,v_norm,v_provider) on conflict(normalized_phone) do update set provider_id=excluded.provider_id,updated_at=now() returning * into v_phone;
- insert into public.customer_numbers(added_number_code,user_id,phone_number_id) values(public.next_public_code('customer_numbers','added_number_code','A'),auth.uid(),v_phone.id) on conflict(user_id,phone_number_id) do update set status='active' returning * into v; return v; end $$;
+declare v_provider uuid; v_phone public.phone_numbers; v public.customer_numbers; v_norm text; v_digits text; v_subscriber public.subscribers;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ v_norm:=regexp_replace(coalesce(p_phone_e164,''),'[^0-9+]','','g');
+ if v_norm !~ '^\+[0-9]{7,15}$' then raise exception 'invalid_phone'; end if;
+ v_digits:=regexp_replace(v_norm,'[^0-9]','','g');
+ select provider_id into v_provider from public.telecom_prefixes
+ where status='active' and v_digits like regexp_replace(prefix,'[^0-9]','','g')||'%'
+ order by length(regexp_replace(prefix,'[^0-9+]','','g')) desc limit 1;
+ if v_provider is null then raise exception 'unknown_phone_prefix'; end if;
+ insert into public.phone_numbers(phone_e164,normalized_phone,provider_id)
+ values(v_norm,regexp_replace(v_norm,'[^0-9]','','g'),v_provider)
+ on conflict(normalized_phone) do nothing;
+ select * into v_phone from public.phone_numbers where normalized_phone=regexp_replace(v_norm,'[^0-9]','','g') for update;
+ if v_phone.provider_id<>v_provider then raise exception 'phone_provider_conflict'; end if;
+ insert into public.customer_numbers(added_number_code,user_id,phone_number_id)
+ values(public.next_public_code('customer_numbers','added_number_code','A'),auth.uid(),v_phone.id)
+ on conflict(user_id,phone_number_id) do update set status='active' returning * into v;
+ select * into v_subscriber from public.subscribers where user_id=auth.uid() and status='active';
+ if found then
+   insert into public.activated_numbers(customer_number_id,subscriber_id,status)
+   values(v.id,v_subscriber.id,'inactive') on conflict(customer_number_id,subscriber_id) do nothing;
+ end if;
+ perform public.write_audit('add_customer_number','customer_number',v.id,null,to_jsonb(v));
+ return v;
+end $$;
+create or replace function public.update_customer_number(p_customer_number_id uuid,p_phone_e164 text) returns public.customer_numbers language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.customer_numbers; v_phone public.phone_numbers; v_provider uuid; v_norm text; v_digits text;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ v_norm:=regexp_replace(coalesce(p_phone_e164,''),'[^0-9+]','','g');
+ if v_norm !~ '^\+[0-9]{7,15}$' then raise exception 'invalid_phone'; end if;
+ v_digits:=regexp_replace(v_norm,'[^0-9]','','g');
+ select * into v from public.customer_numbers where id=p_customer_number_id and user_id=auth.uid() for update;
+ if not found then raise exception 'customer_number_not_found'; end if;
+ if exists(select 1 from public.activated_numbers an where an.customer_number_id=v.id) then
+   raise exception 'activated_number_identity_immutable';
+ end if;
+ select provider_id into v_provider from public.telecom_prefixes where status='active'
+   and v_digits like regexp_replace(prefix,'[^0-9]','','g')||'%' order by length(regexp_replace(prefix,'[^0-9]','','g')) desc limit 1;
+ if v_provider is null then raise exception 'unknown_phone_prefix'; end if;
+ insert into public.phone_numbers(phone_e164,normalized_phone,provider_id)
+ values(v_norm,regexp_replace(v_norm,'[^0-9]','','g'),v_provider) on conflict(normalized_phone) do nothing;
+ select * into v_phone from public.phone_numbers where normalized_phone=regexp_replace(v_norm,'[^0-9]','','g') for update;
+ if v_phone.provider_id<>v_provider then raise exception 'phone_provider_conflict'; end if;
+ if exists(select 1 from public.customer_numbers where user_id=auth.uid() and phone_number_id=v_phone.id and id<>v.id) then raise exception 'duplicate_customer_number'; end if;
+ update public.customer_numbers set phone_number_id=v_phone.id where id=v.id returning * into v;
+ perform public.write_audit('update_customer_number','customer_number',v.id,null,to_jsonb(v));
+ return v;
+end $$;
+create or replace function public.archive_customer_number(p_customer_number_id uuid) returns public.customer_numbers language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.customer_numbers;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ select * into v from public.customer_numbers where id=p_customer_number_id and user_id=auth.uid() for update;
+ if not found then raise exception 'customer_number_not_found'; end if;
+ if exists(select 1 from public.activated_numbers an join public.protections p on p.activated_number_id=an.id where an.customer_number_id=v.id and p.status='active' and p.expires_at>now()) then
+   raise exception 'protected_number_cannot_archive';
+ end if;
+ update public.customer_numbers set status='removed' where id=v.id returning * into v;
+ perform public.write_audit('archive_customer_number','customer_number',v.id,null,to_jsonb(v));
+ return v;
+end $$;
 create or replace function public.submit_points_purchase_request(p_package_id uuid,p_payment_method_id uuid,p_payment_reference text,p_idempotency_key text) returns public.points_purchase_requests language plpgsql security definer set search_path=public,pg_temp as $$
 declare p public.points_packages; m public.payment_methods; v public.points_purchase_requests;
 begin if auth.uid() is null then raise exception 'not_authenticated'; end if; if nullif(trim(p_payment_reference),'') is null or nullif(trim(p_idempotency_key),'') is null then raise exception 'payment_reference_and_idempotency_required'; end if;
+ perform pg_advisory_xact_lock(hashtext('purchase:'||trim(p_idempotency_key)));
+ select * into v from public.points_purchase_requests where idempotency_key=trim(p_idempotency_key) for update;
+ if found then if v.user_id<>auth.uid() or v.package_id<>p_package_id or v.payment_method_id<>p_payment_method_id or v.payment_reference<>trim(p_payment_reference) then raise exception 'idempotency_key_conflict'; end if; return v; end if;
  select * into p from public.points_packages where id=p_package_id and status='active'; if not found then raise exception 'package_unavailable'; end if; select * into m from public.payment_methods where id=p_payment_method_id and status='active'; if not found then raise exception 'payment_method_unavailable'; end if;
- select * into v from public.points_purchase_requests where request_number=trim(p_idempotency_key) for update; if found then return v; end if;
- insert into public.points_purchase_requests(request_number,user_id,package_id,points_amount_snapshot,price_amount_snapshot,currency_snapshot,payment_method_id,payment_method_name_snapshot,payment_account_snapshot,payment_instructions_snapshot,payment_reference)
- values(public.next_public_code('points_purchase_requests','request_number','O'),auth.uid(),p.id,p.points_amount,p.price_amount,p.currency,m.id,m.name,m.account_identifier,m.instructions,trim(p_payment_reference)) returning * into v; return v; end $$;
+ insert into public.points_purchase_requests(request_number,idempotency_key,user_id,package_id,points_amount_snapshot,price_amount_snapshot,currency_snapshot,payment_method_id,payment_method_name_snapshot,payment_account_snapshot,payment_instructions_snapshot,payment_reference)
+ values(public.next_public_code('points_purchase_requests','request_number','O'),trim(p_idempotency_key),auth.uid(),p.id,p.points_amount,p.price_amount,p.currency,m.id,m.name,m.account_identifier,m.instructions,trim(p_payment_reference)) returning * into v;
+ return v;
+end $$;
 create or replace function public.approve_points_purchase(p_request_id uuid,p_idempotency_key text) returns public.points_purchase_requests language plpgsql security definer set search_path=public,pg_temp as $$
-declare v public.points_purchase_requests; b bigint; s public.subscribers;
-begin perform public.require_admin_permission('points_purchases.approve'); select * into v from public.points_purchase_requests where id=p_request_id for update; if not found then raise exception 'purchase_not_found'; end if; if v.status<>'pending' then return v; end if;
- insert into public.subscribers(subscriber_code,user_id,status) values(public.next_public_code('subscribers','subscriber_code','S'),v.user_id,'active') on conflict(user_id) do update set status='active' returning * into s;
+declare v public.points_purchase_requests; b bigint; s public.subscribers; op_id uuid;
+begin
+ perform public.require_admin_permission('points_purchases.approve');
+ if nullif(trim(p_idempotency_key),'') is null then raise exception 'idempotency_key_required'; end if;
+ select * into v from public.points_purchase_requests where id=p_request_id for update;
+ if not found then raise exception 'purchase_not_found'; end if;
+ if v.status='approved' then return v; end if;
+ if v.status<>'pending' then raise exception 'invalid_purchase_state'; end if;
+ insert into public.subscribers(subscriber_code,user_id,status)
+ values(public.next_public_code('subscribers','subscriber_code','S'),v.user_id,'active')
+ on conflict(user_id) do update set status='active' returning * into s;
  update public.points_purchase_requests set status='approved',subscriber_id=s.id,reviewed_by=auth.uid(),reviewed_at=now() where id=v.id returning * into v;
- insert into public.point_balances(user_id) values(v.user_id) on conflict do nothing; select balance_points into b from public.point_balances where user_id=v.user_id for update; b:=b+v.points_amount_snapshot; update public.point_balances set balance_points=b where user_id=v.user_id;
- insert into public.point_ledger(user_id,entry_type,direction,amount_points,balance_after,reference_type,reference_id,created_by) values(v.user_id,'purchase_credit','credit',v.points_amount_snapshot,b,'points_purchase',v.id,auth.uid());
- insert into public.financial_ledger(entry_type,direction,amount,currency,reference_type,reference_id,created_by) values('points_purchase_income','inflow',v.price_amount_snapshot,v.currency_snapshot,'points_purchase',v.id,auth.uid());
- insert into public.operations(operation_type,status,reference_type,reference_id,user_id,subscriber_id,points_delta,money_amount) values('points_purchase','succeeded','points_purchase',v.id,v.user_id,s.id,v.points_amount_snapshot,v.price_amount_snapshot); perform public.write_audit('rpc','points_purchase',v.id,null,to_jsonb(v)); return v; end $$;
-create or replace function public.reject_points_purchase(p_request_id uuid,p_rejection_reason text,p_idempotency_key text) returns public.points_purchase_requests language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.points_purchase_requests; begin perform public.require_admin_permission('points_purchases.reject'); if nullif(trim(p_rejection_reason),'') is null then raise exception 'rejection_reason_required'; end if; select * into v from public.points_purchase_requests where id=p_request_id for update; if not found or v.status<>'pending' then raise exception 'invalid_purchase_state'; end if; update public.points_purchase_requests set status='rejected',rejection_reason=trim(p_rejection_reason),reviewed_by=auth.uid(),reviewed_at=now() where id=v.id returning * into v; perform public.write_audit('rpc','points_purchase',v.id,null,to_jsonb(v)); return v; end $$;
-create or replace function public.cancel_points_purchase(p_request_id uuid) returns public.points_purchase_requests language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.points_purchase_requests; begin select * into v from public.points_purchase_requests where id=p_request_id and user_id=auth.uid() for update; if not found or v.status<>'pending' then raise exception 'invalid_purchase_state'; end if; update public.points_purchase_requests set status='cancelled' where id=v.id returning * into v; return v; end $$;
-create or replace function public.resubmit_points_purchase(p_request_id uuid,p_package_id uuid,p_payment_method_id uuid,p_payment_reference text) returns public.points_purchase_requests language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.points_purchase_requests; p public.points_packages; m public.payment_methods; begin select * into v from public.points_purchase_requests where id=p_request_id and user_id=auth.uid() for update; if not found or v.status<>'rejected' then raise exception 'invalid_purchase_state'; end if; select * into p from public.points_packages where id=p_package_id and status='active'; if not found then raise exception 'package_unavailable'; end if; select * into m from public.payment_methods where id=p_payment_method_id and status='active'; if not found then raise exception 'payment_method_unavailable'; end if; update public.points_purchase_requests set package_id=p.id,points_amount_snapshot=p.points_amount,price_amount_snapshot=p.price_amount,currency_snapshot=p.currency,payment_method_id=m.id,payment_method_name_snapshot=m.name,payment_account_snapshot=m.account_identifier,payment_instructions_snapshot=m.instructions,payment_reference=trim(p_payment_reference),status='pending',rejection_reason=null where id=v.id returning * into v; return v; end $$;
-create or replace function public.rebuild_task_plan(p_protection_id uuid,p_reason text default null) returns public.protection_task_plans language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.protection_task_plans; p public.protections; s public.task_settings; d timestamptz; n int:=0; begin select * into p from public.protections where id=p_protection_id for update; if not found then raise exception 'protection_not_found'; end if; select * into s from public.task_settings where provider_id=p.provider_id; if not found then raise exception 'task_settings_not_found'; end if; insert into public.protection_task_plans(protection_id,anchor_date,interval_days,planned_until) values(p.id,p.started_at,s.interval_days,p.expires_at) on conflict(protection_id) do update set interval_days=excluded.interval_days,planned_until=excluded.planned_until,version=public.protection_task_plans.version+1,last_rebuilt_at=now() returning * into v; delete from public.payment_tasks where plan_id=v.id and status='open' and due_at>=now(); d:=v.anchor_date; while d<p.expires_at loop if d>=now() and s.auto_create then n:=n+1; insert into public.payment_tasks(task_code,plan_id,protection_id,phone_number_id,subscriber_id,provider_id,due_at,original_due_at,amount_snapshot,currency_snapshot,sequence_no) values(public.next_public_code('payment_tasks','task_code','T'),v.id,p.id,(select cn.phone_number_id from public.activated_numbers an join public.customer_numbers cn on cn.id=an.customer_number_id where an.id=p.activated_number_id),p.subscriber_id,p.provider_id,d,d,s.task_amount,s.currency,n) on conflict do nothing; end if; d:=d+make_interval(days=>s.interval_days); end loop; update public.protection_task_plans set planned_task_count=n where id=v.id returning * into v; return v; end $$;
+ insert into public.activated_numbers(customer_number_id,subscriber_id,status)
+ select cn.id,s.id,'inactive' from public.customer_numbers cn where cn.user_id=v.user_id and cn.status='active'
+ on conflict(customer_number_id,subscriber_id) do nothing;
+ insert into public.point_balances(user_id) values(v.user_id) on conflict do nothing;
+ select balance_points into b from public.point_balances where user_id=v.user_id for update;
+ b:=b+v.points_amount_snapshot;
+ update public.point_balances set balance_points=b where user_id=v.user_id;
+ insert into public.point_ledger(user_id,entry_type,direction,amount_points,balance_after,reference_type,reference_id,created_by)
+ values(v.user_id,'purchase_credit','credit',v.points_amount_snapshot,b,'points_purchase',v.id,auth.uid());
+ insert into public.financial_ledger(entry_type,direction,amount,currency,reference_type,reference_id,created_by)
+ values('points_purchase_income','inflow',v.price_amount_snapshot,v.currency_snapshot,'points_purchase',v.id,auth.uid());
+ insert into public.aman_financial_balance(currency,balance_amount) values(v.currency_snapshot,v.price_amount_snapshot)
+ on conflict(currency) do update set balance_amount=public.aman_financial_balance.balance_amount+excluded.balance_amount;
+ insert into public.operations(operation_type,status,reference_type,reference_id,user_id,subscriber_id,points_delta,money_amount,idempotency_key)
+ values('points_purchase','succeeded','points_purchase',v.id,v.user_id,s.id,v.points_amount_snapshot,v.price_amount_snapshot,'approve:'||trim(p_idempotency_key)) returning id into op_id;
+ insert into public.system_notifications(user_id,type,title,body,reference_type,reference_id,deduplication_key)
+ values(v.user_id,'points_purchase_approved','تم اعتماد طلب شراء النقاط','تم اعتماد طلب شراء النقاط وإضافة الرصيد إلى حسابك.','points_purchase',v.id,'purchase-approved:'||v.id::text)
+ on conflict(deduplication_key) do nothing;
+ perform public.write_audit('approve_points_purchase','points_purchase',v.id,null,to_jsonb(v),jsonb_build_object('operation_id',op_id));
+ return v;
+end $$;
+create or replace function public.reject_points_purchase(p_request_id uuid,p_rejection_reason text,p_idempotency_key text) returns public.points_purchase_requests language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.points_purchase_requests; op_id uuid;
+begin
+ perform public.require_admin_permission('points_purchases.reject');
+ if nullif(trim(p_rejection_reason),'') is null or nullif(trim(p_idempotency_key),'') is null then raise exception 'rejection_reason_and_idempotency_required'; end if;
+ select * into v from public.points_purchase_requests where id=p_request_id for update;
+ if not found then raise exception 'purchase_not_found'; end if;
+ if v.status='rejected' then return v; end if;
+ if v.status<>'pending' then raise exception 'invalid_purchase_state'; end if;
+ update public.points_purchase_requests set status='rejected',rejection_reason=trim(p_rejection_reason),reviewed_by=auth.uid(),reviewed_at=now() where id=v.id returning * into v;
+ insert into public.operations(idempotency_key,operation_type,status,reference_type,reference_id,user_id,subscriber_id,points_delta,money_amount,metadata)
+ values('reject:'||trim(p_idempotency_key),'points_rejection','succeeded','points_purchase',v.id,v.user_id,v.subscriber_id,0,v.price_amount_snapshot,jsonb_build_object('reason',v.rejection_reason)) returning id into op_id;
+ insert into public.system_notifications(user_id,type,title,body,reference_type,reference_id,deduplication_key)
+ values(v.user_id,'points_purchase_rejected','طلب شراء النقاط مرفوض','تم رفض طلب شراء النقاط. راجع سبب الرفض ثم أعد تقديم الطلب بعد التصحيح.','points_purchase',v.id,'purchase-rejected:'||v.id::text) on conflict(deduplication_key) do nothing;
+ perform public.write_audit('reject_points_purchase','points_purchase',v.id,null,to_jsonb(v),jsonb_build_object('operation_id',op_id));
+ return v;
+end $$;
+create or replace function public.cancel_points_purchase(p_request_id uuid) returns public.points_purchase_requests language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.points_purchase_requests;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ select * into v from public.points_purchase_requests where id=p_request_id and user_id=auth.uid() for update;
+ if not found then raise exception 'purchase_not_found'; end if;
+ if v.status='cancelled' then return v; end if;
+ if v.status<>'pending' then raise exception 'invalid_purchase_state'; end if;
+ update public.points_purchase_requests set status='cancelled' where id=v.id returning * into v;
+ insert into public.operations(operation_type,status,reference_type,reference_id,user_id,subscriber_id,points_delta,money_amount)
+ values('points_purchase_cancelled','succeeded','points_purchase',v.id,v.user_id,v.subscriber_id,0,v.price_amount_snapshot);
+ perform public.write_audit('cancel_points_purchase','points_purchase',v.id,null,to_jsonb(v));
+ return v;
+end $$;
+create or replace function public.resubmit_points_purchase(p_request_id uuid,p_package_id uuid,p_payment_method_id uuid,p_payment_reference text) returns public.points_purchase_requests language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.points_purchase_requests; p public.points_packages; m public.payment_methods;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ if nullif(trim(p_payment_reference),'') is null then raise exception 'payment_reference_required'; end if;
+ select * into v from public.points_purchase_requests where id=p_request_id and user_id=auth.uid() for update;
+ if not found or v.status<>'rejected' then raise exception 'invalid_purchase_state'; end if;
+ select * into p from public.points_packages where id=p_package_id and status='active'; if not found then raise exception 'package_unavailable'; end if;
+ select * into m from public.payment_methods where id=p_payment_method_id and status='active'; if not found then raise exception 'payment_method_unavailable'; end if;
+ update public.points_purchase_requests set package_id=p.id,points_amount_snapshot=p.points_amount,price_amount_snapshot=p.price_amount,currency_snapshot=p.currency,payment_method_id=m.id,payment_method_name_snapshot=m.name,payment_account_snapshot=m.account_identifier,payment_instructions_snapshot=m.instructions,payment_reference=trim(p_payment_reference),status='pending',rejection_reason=null,reviewed_by=null,reviewed_at=null where id=v.id returning * into v;
+ perform public.write_audit('resubmit_points_purchase','points_purchase',v.id,null,to_jsonb(v));
+ return v;
+end $$;
+create or replace function public._rebuild_task_plan_internal(p_protection_id uuid,p_reason text default null) returns public.protection_task_plans language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.protection_task_plans; p public.protections; s public.task_settings; d timestamptz; n int:=0; begin select * into p from public.protections where id=p_protection_id for update; if not found then raise exception 'protection_not_found'; end if; select * into s from public.task_settings where provider_id=p.provider_id; if not found then raise exception 'task_settings_not_found'; end if; insert into public.protection_task_plans(protection_id,anchor_date,interval_days,planned_until) values(p.id,p.started_at,s.interval_days,p.expires_at) on conflict(protection_id) do update set interval_days=excluded.interval_days,planned_until=excluded.planned_until,version=public.protection_task_plans.version+1,last_rebuilt_at=now() returning * into v; update public.payment_tasks set status='cancelled',cancelled_at=now(),cancellation_reason=coalesce(p_reason,'task_plan_rebuilt') where plan_id=v.id and status='open' and due_at>=now(); select coalesce(max(sequence_no),0) into n from public.payment_tasks where plan_id=v.id; d:=v.anchor_date; while d<p.expires_at loop if d>=now() and s.auto_create then n:=n+1; insert into public.payment_tasks(task_code,plan_id,protection_id,phone_number_id,subscriber_id,provider_id,due_at,original_due_at,amount_snapshot,currency_snapshot,sequence_no) values(public.next_public_code('payment_tasks','task_code','T'),v.id,p.id,(select cn.phone_number_id from public.activated_numbers an join public.customer_numbers cn on cn.id=an.customer_number_id where an.id=p.activated_number_id),p.subscriber_id,p.provider_id,d,d,s.task_amount,s.currency,n) on conflict do nothing; end if; d:=d+make_interval(days=>s.interval_days); end loop; update public.protection_task_plans set planned_task_count=n where id=v.id returning * into v; return v; end $$;
 
--- Remaining V7 mutation names are present with canonical signatures. Their detailed business paths are explicit UNRESOLVED in the phase status where V7 does not define a complete SQL signature.
-create or replace function public.activate_protection(p_activated_number_id uuid,p_duration_days integer,p_idempotency_key text) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$ begin raise exception 'UNRESOLVED: activation transaction requires final tariff/ledger policy verification'; end $$;
-create or replace function public.extend_protection(p_protection_id uuid,p_extension_days integer,p_idempotency_key text) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$ begin raise exception 'UNRESOLVED: extension transaction requires final tariff/ledger policy verification'; end $$;
-create or replace function public.renew_protection(p_activated_number_id uuid,p_duration_days integer,p_confirmed boolean,p_idempotency_key text) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$ begin raise exception 'UNRESOLVED: renewal task-anchor policy needs executable acceptance verification'; end $$;
+create or replace function public.rebuild_task_plan(p_protection_id uuid,p_reason text default null) returns public.protection_task_plans language plpgsql security definer set search_path=public,pg_temp as $$
+begin
+  perform public.require_admin_permission('tasks.reschedule');
+  return public._rebuild_task_plan_internal(p_protection_id,p_reason);
+end $$;
+create or replace function public.activate_protection(p_activated_number_id uuid,p_duration_days integer,p_idempotency_key text) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
+declare v_an public.activated_numbers; v_cn public.customer_numbers; v_phone public.phone_numbers; v_sub public.subscribers; v_tariff public.provider_tariffs; v_balance bigint; v_cost bigint; v_now timestamptz:=clock_timestamp(); v_protection public.protections; v_operation public.operations;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ if p_duration_days is null or p_duration_days not between 1 and 3650 then raise exception 'invalid_duration'; end if;
+ if nullif(trim(p_idempotency_key),'') is null then raise exception 'idempotency_key_required'; end if;
+ select * into v_operation from public.operations where idempotency_key=trim(p_idempotency_key) for update;
+ if found then
+   if v_operation.user_id<>auth.uid() then raise exception 'idempotency_key_conflict'; end if;
+   if v_operation.operation_type<>'protection_activation' or (v_operation.metadata->>'duration_days')::integer<>p_duration_days then raise exception 'idempotency_key_conflict'; end if;
+   select * into v_protection from public.protections where id=v_operation.reference_id;
+   if v_protection.activated_number_id<>p_activated_number_id then raise exception 'idempotency_key_conflict'; end if;
+   return jsonb_build_object('protection_id',v_protection.id,'activation_code',(select activation_code from public.activated_numbers where id=v_protection.activated_number_id),'started_at',v_protection.started_at,'expires_at',v_protection.expires_at,'cost',-coalesce(v_operation.points_delta,0),'remaining_points',(select balance_points from public.point_balances where user_id=auth.uid()));
+ end if;
+ select * into v_an from public.activated_numbers where id=p_activated_number_id for update;
+ if not found then raise exception 'activated_number_not_found'; end if;
+ if v_an.status<>'inactive' then raise exception 'activation_already_used_use_renewal'; end if;
+ select * into v_cn from public.customer_numbers where id=v_an.customer_number_id and user_id=auth.uid() and status='active' for update;
+ if not found then raise exception 'number_not_owned_or_inactive'; end if;
+ select * into v_sub from public.subscribers where id=v_an.subscriber_id and user_id=auth.uid() and status='active' for update;
+ if not found then raise exception 'active_subscriber_required'; end if;
+ if v_an.activation_code is not null or exists(select 1 from public.protections where activated_number_id=v_an.id) then raise exception 'activation_already_used_use_renewal'; end if;
+ select * into v_phone from public.phone_numbers where id=v_cn.phone_number_id;
+ select * into v_tariff from public.provider_tariffs where provider_id=v_phone.provider_id and status='active' and effective_from<=v_now and (effective_to is null or effective_to>v_now) order by effective_from desc limit 1;
+ if not found then raise exception 'tariff_not_found'; end if;
+ v_cost:=v_tariff.points_per_day::bigint*p_duration_days::bigint;
+ insert into public.point_balances(user_id,balance_points) values(auth.uid(),0) on conflict(user_id) do nothing;
+ select balance_points into v_balance from public.point_balances where user_id=auth.uid() for update;
+ if v_balance<v_cost then raise exception 'insufficient_points'; end if;
+ insert into public.protections(activated_number_id,subscriber_id,provider_id,tariff_id,status,started_at,expires_at,duration_days,points_per_day_snapshot,total_points_snapshot)
+ values(v_an.id,v_sub.id,v_phone.provider_id,v_tariff.id,'active',v_now,v_now+make_interval(days=>p_duration_days),p_duration_days,v_tariff.points_per_day,v_cost) returning * into v_protection;
+ update public.activated_numbers set activation_code=coalesce(activation_code,public.next_public_code('activated_numbers','activation_code','X')),current_protection_id=v_protection.id,status='active',activated_at=coalesce(activated_at,v_now) where id=v_an.id returning * into v_an;
+ v_balance:=v_balance-v_cost;
+ update public.point_balances set balance_points=v_balance where user_id=auth.uid();
+ insert into public.point_ledger(user_id,entry_type,direction,amount_points,balance_after,reference_type,reference_id,description,created_by)
+ values(auth.uid(),'activation_debit','debit',v_cost,v_balance,'protection_activation',v_protection.id,'تفعيل حماية رقم',auth.uid());
+ insert into public.operations(idempotency_key,operation_type,status,reference_type,reference_id,user_id,subscriber_id,phone_number_id,points_delta,metadata)
+ values(trim(p_idempotency_key),'protection_activation','succeeded','protection',v_protection.id,auth.uid(),v_sub.id,v_cn.phone_number_id,-v_cost,jsonb_build_object('duration_days',p_duration_days,'activation_code',v_an.activation_code));
+ perform public._rebuild_task_plan_internal(v_protection.id,'initial_activation');
+ insert into public.system_notifications(user_id,type,title,body,reference_type,reference_id,deduplication_key)
+ values(auth.uid(),'protection_activated','تم تفعيل الحماية','تم تفعيل حماية الرقم بنجاح.','protection',v_protection.id,'activation:'||v_protection.id::text) on conflict(deduplication_key) do nothing;
+ perform public.write_audit('activate_protection','protection',v_protection.id,null,to_jsonb(v_protection),jsonb_build_object('activation_code',v_an.activation_code,'cost',v_cost));
+ return jsonb_build_object('protection_id',v_protection.id,'activation_code',v_an.activation_code,'started_at',v_protection.started_at,'expires_at',v_protection.expires_at,'cost',v_cost,'remaining_points',v_balance);
+end $$;
+create or replace function public.extend_protection(p_protection_id uuid,p_extension_days integer,p_idempotency_key text) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
+declare v_protection public.protections; v_an public.activated_numbers; v_sub public.subscribers; v_balance bigint; v_cost bigint; v_before timestamptz; v_after timestamptz; v_ledger public.point_ledger; v_extension public.protection_extensions; v_operation public.operations; v_now timestamptz:=clock_timestamp();
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ if p_extension_days is null or p_extension_days not between 1 and 3650 then raise exception 'invalid_extension_days'; end if;
+ if nullif(trim(p_idempotency_key),'') is null then raise exception 'idempotency_key_required'; end if;
+ select * into v_operation from public.operations where idempotency_key=trim(p_idempotency_key) for update;
+ if found then
+   if v_operation.user_id<>auth.uid() then raise exception 'idempotency_key_conflict'; end if;
+   if v_operation.operation_type<>'protection_extension' then raise exception 'idempotency_key_conflict'; end if;
+   select * into v_extension from public.protection_extensions where id=v_operation.reference_id;
+   if v_extension.days_added<>p_extension_days or v_extension.protection_id<>p_protection_id then raise exception 'idempotency_key_conflict'; end if;
+   select * into v_protection from public.protections where id=v_extension.protection_id;
+   return jsonb_build_object('protection_id',v_protection.id,'expires_at',v_protection.expires_at,'extension_days',v_extension.days_added,'cost',v_extension.points_cost,'remaining_points',(select balance_points from public.point_balances where user_id=auth.uid()));
+ end if;
+ select * into v_protection from public.protections where id=p_protection_id for update;
+ if not found then raise exception 'protection_not_owned_or_inactive'; end if;
+ select * into v_an from public.activated_numbers where id=v_protection.activated_number_id for update;
+ select * into v_sub from public.subscribers where id=v_an.subscriber_id and user_id=auth.uid() and status='active';
+ if not found or v_protection.subscriber_id<>v_sub.id then raise exception 'protection_not_owned_or_inactive'; end if;
+ if v_protection.status<>'active' or v_protection.expires_at<=v_now then raise exception 'protection_expired_use_renewal'; end if;
+ v_before:=v_protection.expires_at; v_after:=v_before+make_interval(days=>p_extension_days);
+ v_cost:=v_protection.points_per_day_snapshot::bigint*p_extension_days::bigint;
+ select balance_points into v_balance from public.point_balances where user_id=auth.uid() for update;
+ if not found then raise exception 'point_balance_not_found'; end if;
+ if v_balance<v_cost then raise exception 'insufficient_points'; end if;
+ v_balance:=v_balance-v_cost;
+ update public.point_balances set balance_points=v_balance where user_id=auth.uid();
+ update public.protections set expires_at=v_after,duration_days=duration_days+p_extension_days where id=v_protection.id returning * into v_protection;
+ insert into public.point_ledger(user_id,entry_type,direction,amount_points,balance_after,reference_type,reference_id,description,created_by)
+ values(auth.uid(),'extension_debit','debit',v_cost,v_balance,'protection_extension',v_protection.id,'تمديد حماية رقم',auth.uid()) returning * into v_ledger;
+ insert into public.protection_extensions(protection_id,subscriber_id,days_added,points_per_day_snapshot,points_cost,expires_at_before,expires_at_after,point_ledger_id,idempotency_key)
+ values(v_protection.id,v_sub.id,p_extension_days,v_protection.points_per_day_snapshot,v_cost,v_before,v_after,v_ledger.id,trim(p_idempotency_key)) returning * into v_extension;
+ insert into public.operations(idempotency_key,operation_type,status,reference_type,reference_id,user_id,subscriber_id,phone_number_id,points_delta,metadata)
+ select trim(p_idempotency_key),'protection_extension','succeeded','protection_extension',v_extension.id,auth.uid(),v_sub.id,cn.phone_number_id,-v_cost,jsonb_build_object('days_added',p_extension_days,'expires_at_before',v_before,'expires_at_after',v_after)
+ from public.customer_numbers cn where cn.id=(select customer_number_id from public.activated_numbers where id=v_protection.activated_number_id) returning * into v_operation;
+ update public.protection_extensions set operation_id=v_operation.id where id=v_extension.id;
+ perform public._rebuild_task_plan_internal(v_protection.id,'protection_extension');
+ insert into public.system_notifications(user_id,type,title,body,reference_type,reference_id,deduplication_key)
+ values(auth.uid(),'protection_extended','تم تمديد الحماية','تم تمديد الحماية وإضافة الأيام إلى تاريخ الانتهاء.','protection',v_protection.id,'extension:'||v_extension.id::text) on conflict(deduplication_key) do nothing;
+ perform public.write_audit('extend_protection','protection_extension',v_extension.id,null,to_jsonb(v_extension),jsonb_build_object('new_expiry',v_after,'cost',v_cost));
+ return jsonb_build_object('protection_id',v_protection.id,'expires_at',v_after,'extension_days',p_extension_days,'cost',v_cost,'remaining_points',v_balance);
+end $$;
+create or replace function public.renew_protection(p_activated_number_id uuid,p_duration_days integer,p_confirmed boolean,p_idempotency_key text) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
+declare v_an public.activated_numbers; v_cn public.customer_numbers; v_phone public.phone_numbers; v_sub public.subscribers; v_old public.protections; v_tariff public.provider_tariffs; v_balance bigint; v_cost bigint; v_now timestamptz:=clock_timestamp(); v_protection public.protections; v_operation public.operations;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ if p_confirmed is distinct from true then raise exception 'explicit_confirmation_required'; end if;
+ if p_duration_days is null or p_duration_days not between 1 and 3650 then raise exception 'invalid_duration'; end if;
+ if nullif(trim(p_idempotency_key),'') is null then raise exception 'idempotency_key_required'; end if;
+ select * into v_operation from public.operations where idempotency_key=trim(p_idempotency_key) for update;
+ if found then
+   if v_operation.user_id<>auth.uid() then raise exception 'idempotency_key_conflict'; end if;
+   if v_operation.operation_type<>'protection_renewal' or (v_operation.metadata->>'duration_days')::integer<>p_duration_days then raise exception 'idempotency_key_conflict'; end if;
+   select * into v_protection from public.protections where id=v_operation.reference_id;
+   if v_protection.activated_number_id<>p_activated_number_id then raise exception 'idempotency_key_conflict'; end if;
+   return jsonb_build_object('protection_id',v_protection.id,'activation_code',(select activation_code from public.activated_numbers where id=v_protection.activated_number_id),'started_at',v_protection.started_at,'expires_at',v_protection.expires_at,'cost',-coalesce(v_operation.points_delta,0),'remaining_points',(select balance_points from public.point_balances where user_id=auth.uid()));
+ end if;
+ select * into v_an from public.activated_numbers where id=p_activated_number_id for update;
+ if not found or v_an.activation_code is null then raise exception 'renewal_requires_existing_activation'; end if;
+ select * into v_cn from public.customer_numbers where id=v_an.customer_number_id and user_id=auth.uid() and status='active' for update;
+ if not found then raise exception 'number_not_owned_or_inactive'; end if;
+ select * into v_sub from public.subscribers where id=v_an.subscriber_id and user_id=auth.uid() and status='active' for update;
+ if not found then raise exception 'active_subscriber_required'; end if;
+ if v_an.current_protection_id is null then raise exception 'renewal_requires_expired_protection'; end if;
+ select * into v_old from public.protections where id=v_an.current_protection_id for update;
+ if not found or (v_old.status='active' and v_old.expires_at>v_now) then raise exception 'protection_not_expired'; end if;
+ select * into v_phone from public.phone_numbers where id=v_cn.phone_number_id;
+ select * into v_tariff from public.provider_tariffs where provider_id=v_phone.provider_id and status='active' and effective_from<=v_now and (effective_to is null or effective_to>v_now) order by effective_from desc limit 1;
+ if not found then raise exception 'tariff_not_found'; end if;
+ v_cost:=v_tariff.points_per_day::bigint*p_duration_days::bigint;
+ select balance_points into v_balance from public.point_balances where user_id=auth.uid() for update;
+ if not found then raise exception 'point_balance_not_found'; end if;
+ if v_balance<v_cost then raise exception 'insufficient_points'; end if;
+ update public.protections set status='expired' where id=v_old.id;
+ update public.protection_task_plans set status='closed' where protection_id=v_old.id;
+ update public.payment_tasks set status='cancelled',cancelled_at=v_now,cancelled_by=auth.uid(),cancellation_reason='protection_renewed'
+ where protection_id=v_old.id and status='open';
+ insert into public.protections(activated_number_id,subscriber_id,provider_id,tariff_id,status,started_at,expires_at,duration_days,points_per_day_snapshot,total_points_snapshot)
+ values(v_an.id,v_sub.id,v_phone.provider_id,v_tariff.id,'active',v_now,v_now+make_interval(days=>p_duration_days),p_duration_days,v_tariff.points_per_day,v_cost) returning * into v_protection;
+ update public.activated_numbers set current_protection_id=v_protection.id,status='active',activated_at=coalesce(activated_at,v_now) where id=v_an.id;
+ v_balance:=v_balance-v_cost;
+ update public.point_balances set balance_points=v_balance where user_id=auth.uid();
+ insert into public.point_ledger(user_id,entry_type,direction,amount_points,balance_after,reference_type,reference_id,description,created_by)
+ values(auth.uid(),'renewal_debit','debit',v_cost,v_balance,'protection_renewal',v_protection.id,'تجديد حماية رقم',auth.uid());
+ insert into public.operations(idempotency_key,operation_type,status,reference_type,reference_id,user_id,subscriber_id,phone_number_id,points_delta,metadata)
+ values(trim(p_idempotency_key),'protection_renewal','succeeded','protection',v_protection.id,auth.uid(),v_sub.id,v_cn.phone_number_id,-v_cost,jsonb_build_object('duration_days',p_duration_days,'activation_code',v_an.activation_code));
+ perform public._rebuild_task_plan_internal(v_protection.id,'protection_renewal');
+ insert into public.system_notifications(user_id,type,title,body,reference_type,reference_id,deduplication_key)
+ values(auth.uid(),'protection_renewed','تم تجديد الحماية','تم تجديد الحماية وبدء فترة جديدة.','protection',v_protection.id,'renewal:'||v_protection.id::text) on conflict(deduplication_key) do nothing;
+ perform public.write_audit('renew_protection','protection',v_protection.id,to_jsonb(v_old),to_jsonb(v_protection),jsonb_build_object('cost',v_cost));
+ return jsonb_build_object('protection_id',v_protection.id,'activation_code',v_an.activation_code,'started_at',v_protection.started_at,'expires_at',v_protection.expires_at,'cost',v_cost,'remaining_points',v_balance);
+end $$;
 create or replace function public.reschedule_payment_task(p_task_id uuid,p_new_due_at timestamptz,p_reason text default null) returns public.payment_tasks language plpgsql security definer set search_path=public,pg_temp as $$ begin raise exception 'UNRESOLVED: reschedule history/anchor execution requires runtime verification'; end $$;
 create or replace function public.execute_payment_task(p_task_id uuid,p_external_reference text,p_idempotency_key text) returns public.payment_tasks language plpgsql security definer set search_path=public,pg_temp as $$ begin raise exception 'UNRESOLVED: task financial posting requires configured operational policy verification'; end $$;
 create or replace function public.cancel_payment_task(p_task_id uuid,p_reason text) returns public.payment_tasks language plpgsql security definer set search_path=public,pg_temp as $$ begin raise exception 'UNRESOLVED: cancellation rebuild policy requires runtime verification'; end $$;
 create or replace function public.mark_notification_read(p_notification_id uuid) returns public.system_notifications language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.system_notifications; begin update public.system_notifications set is_read=true,read_at=coalesce(read_at,now()) where id=p_notification_id and user_id=auth.uid() returning * into v; if not found then raise exception 'notification_not_found'; end if; return v; end $$;
-create or replace function public.send_admin_notification(p_type text,p_target_type public.admin_notification_target,p_target_id uuid,p_title text,p_body text) returns public.admin_notifications language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.admin_notifications; begin perform public.require_admin_permission('notifications.send'); insert into public.admin_notifications(sender_admin_id,target_type,target_id,title,body,status,sent_at) values(auth.uid(),p_target_type,p_target_id,p_title,p_body,'sent',now()) returning * into v; perform public.write_audit('rpc','admin_notification',v.id,null,to_jsonb(v)); return v; end $$;
+create or replace function public.get_customer_task_summaries() returns jsonb language plpgsql stable security definer set search_path=public,pg_temp as $$
+declare v_result jsonb;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ select coalesce(jsonb_agg(jsonb_build_object('protection_id',p.id,'next_due_at',nt.due_at,'next_status',nt.status) order by p.expires_at desc),'[]'::jsonb)
+ into v_result
+ from public.protections p
+ join public.activated_numbers an on an.id=p.activated_number_id
+ join public.customer_numbers cn on cn.id=an.customer_number_id and cn.user_id=auth.uid()
+ left join lateral (select t.due_at,t.status from public.payment_tasks t where t.protection_id=p.id and t.status='open' order by t.due_at limit 1) nt on true
+ where p.subscriber_id=an.subscriber_id and p.status='active';
+ return v_result;
+end $$;
+create or replace function public.send_admin_notification(p_type text,p_target_type public.admin_notification_target,p_target_id uuid,p_title text,p_body text) returns public.admin_notifications language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.admin_notifications;
+begin
+ perform public.require_admin_permission('notifications.send');
+ if nullif(trim(p_title),'') is null or nullif(trim(p_body),'') is null then raise exception 'notification_title_and_body_required'; end if;
+ if (p_target_type='all' and p_target_id is not null) or (p_target_type<>'all' and p_target_id is null) then raise exception 'notification_target_invalid'; end if;
+ insert into public.admin_notifications(sender_admin_id,target_type,target_id,title,body,status,sent_at)
+ values(auth.uid(),p_target_type,p_target_id,trim(p_title),trim(p_body),'sent',now()) returning * into v;
+ insert into public.system_notifications(user_id,type,title,body,reference_type,reference_id,deduplication_key)
+ select p.id,coalesce(nullif(trim(p_type),''),'admin_alert'),trim(p_title),trim(p_body),'admin_notification',v.id,'admin-notification:'||v.id::text||':'||p.id::text
+ from public.profiles p
+ where p.account_status='active' and (p_target_type='all'
+   or (p_target_type='user' and p.id=p_target_id)
+   or (p_target_type='subscriber' and exists(select 1 from public.subscribers s where s.user_id=p.id and s.id=p_target_id and s.status='active')));
+ perform public.write_audit('send_admin_notification','admin_notification',v.id,null,to_jsonb(v));
+ return v;
+end $$;
 create or replace function public.admin_adjust_points(p_user_id uuid,p_amount_points bigint,p_reason text,p_idempotency_key text) returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$ begin perform public.require_admin_permission('customers.points_adjust'); if p_amount_points=0 then raise exception 'amount_required'; end if; raise exception 'UNRESOLVED: configured monetary value per point is not defined in V7'; end $$;
 create or replace function public.set_maintenance_mode(p_enabled boolean,p_customer_message text) returns public.maintenance_config language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.maintenance_config; begin perform public.require_admin_permission('system.maintenance'); insert into public.maintenance_config(enabled,customer_message,updated_by) values(p_enabled,p_customer_message,auth.uid()) on conflict(singleton_key) do update set enabled=excluded.enabled,customer_message=excluded.customer_message,updated_by=excluded.updated_by,updated_at=now() returning * into v; perform public.write_audit('rpc','maintenance_config',v.id,null,to_jsonb(v)); return v; end $$;
-create or replace function public.create_support_thread(p_subject text,p_body text default null) returns public.support_threads language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.support_threads; begin insert into public.support_threads(user_id,subject) values(auth.uid(),trim(p_subject)) returning * into v; if nullif(trim(p_body),'') is not null then insert into public.support_messages(thread_id,sender_type,sender_id,body) values(v.id,'customer',auth.uid(),trim(p_body)); end if; return v; end $$;
-create or replace function public.send_support_message(p_thread_id uuid,p_body text) returns public.support_messages language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.support_messages; begin if not exists(select 1 from public.support_threads where id=p_thread_id and (user_id=auth.uid() or public.admin_has_permission('customers.read'))) then raise exception 'thread_forbidden'; end if; insert into public.support_messages(thread_id,sender_type,sender_id,body) values(p_thread_id,case when public.admin_has_permission('customers.read') then 'admin' else 'customer' end,auth.uid(),trim(p_body)) returning * into v; update public.support_threads set updated_at=now() where id=p_thread_id; return v; end $$;
+create or replace function public.create_support_thread(p_subject text,p_body text default null) returns public.support_threads language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.support_threads;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ if nullif(trim(p_subject),'') is null or nullif(trim(p_body),'') is null then raise exception 'support_subject_and_body_required'; end if;
+ insert into public.support_threads(user_id,subject) values(auth.uid(),trim(p_subject)) returning * into v;
+ insert into public.support_messages(thread_id,sender_type,sender_id,body) values(v.id,'customer',auth.uid(),trim(p_body));
+ perform public.write_audit('create_support_thread','support_thread',v.id,null,to_jsonb(v));
+ return v;
+end $$;
+create or replace function public.send_support_message(p_thread_id uuid,p_body text) returns public.support_messages language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.support_messages; t public.support_threads; v_is_admin boolean;
+begin
+ if auth.uid() is null then raise exception 'not_authenticated'; end if;
+ if nullif(trim(p_body),'') is null then raise exception 'support_body_required'; end if;
+ v_is_admin:=public.admin_has_permission('customers.read');
+ select * into t from public.support_threads where id=p_thread_id and (user_id=auth.uid() or v_is_admin) for update;
+ if not found then raise exception 'support_thread_not_owned_or_closed'; end if;
+ if t.status<>'open' then raise exception 'support_thread_not_owned_or_closed'; end if;
+ insert into public.support_messages(thread_id,sender_type,sender_id,body) values(t.id,case when v_is_admin then 'admin' else 'customer' end,auth.uid(),trim(p_body)) returning * into v;
+ update public.support_threads set updated_at=now() where id=t.id;
+ return v;
+end $$;
 create or replace function public.close_support_thread(p_thread_id uuid) returns public.support_threads language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.support_threads; begin if not exists(select 1 from public.support_threads where id=p_thread_id and (user_id=auth.uid() or public.admin_has_permission('customers.update'))) then raise exception 'thread_forbidden'; end if; update public.support_threads set status='closed',updated_at=now() where id=p_thread_id returning * into v; perform public.write_audit('rpc','support_thread',v.id,null,to_jsonb(v)); return v; end $$;
 
 -- Indexes required by the canonical query paths
@@ -340,16 +677,20 @@ create index idx_operation_logs_operation on public.operation_logs(operation_id,
 create index idx_audit_logs_entity on public.audit_logs(entity_type,entity_id,created_at desc);
 
 -- RLS: no direct customer writes to sensitive objects; policies are unique and canonical.
-do $$ declare t text; begin foreach t in array array['profiles','subscribers','customer_numbers','phone_numbers','points_packages','payment_methods','points_purchase_requests','point_balances','point_ledger','activated_numbers','protections','protection_extensions','operations','task_settings','protection_task_plans','payment_tasks','financial_ledger','aman_financial_balance','expenses','system_notifications','admin_notifications','support_threads','support_messages','operation_logs','audit_logs','maintenance_config'] loop execute format('alter table public.%I enable row level security',t); end loop; end $$;
+do $$ declare t text; begin foreach t in array array['profiles','subscribers','customer_numbers','phone_numbers','telecom_providers','telecom_prefixes','provider_tariffs','points_packages','payment_methods','points_purchase_requests','point_balances','point_ledger','activated_numbers','protections','protection_extensions','operations','task_settings','protection_task_plans','payment_tasks','financial_ledger','aman_financial_balance','expenses','system_notifications','admin_notifications','support_threads','support_messages','operation_logs','audit_logs','maintenance_config'] loop execute format('alter table public.%I enable row level security',t); end loop; end $$;
 create policy profiles_self_read on public.profiles for select using(id=auth.uid() or public.admin_has_permission('users.read'));
 create policy subscribers_self_read on public.subscribers for select using(user_id=auth.uid() or public.admin_has_permission('customers.read'));
 create policy customer_numbers_self_read on public.customer_numbers for select using(user_id=auth.uid() or public.admin_has_permission('numbers.read'));
 create policy phone_numbers_related_read on public.phone_numbers for select using(exists(select 1 from public.customer_numbers c where c.phone_number_id=id and c.user_id=auth.uid()) or public.admin_has_permission('numbers.read'));
+create policy telecom_providers_active_read on public.telecom_providers for select using(status='active' or public.admin_has_permission('providers.read'));
+create policy telecom_prefixes_active_read on public.telecom_prefixes for select using(status='active' or public.admin_has_permission('providers.read'));
+create policy provider_tariffs_active_read on public.provider_tariffs for select using(status='active' or public.admin_has_permission('providers.read'));
 create policy packages_active_read on public.points_packages for select using(status='active' or public.admin_has_permission('packages.read'));
 create policy payment_methods_active_read on public.payment_methods for select using(status='active' or public.admin_has_permission('payment_methods.read'));
 create policy purchases_owner_admin_read on public.points_purchase_requests for select using(user_id=auth.uid() or public.admin_has_permission('points_purchases.read'));
 create policy point_balances_owner_admin_read on public.point_balances for select using(user_id=auth.uid() or public.admin_has_permission('customers.read'));
 create policy point_ledger_owner_admin_read on public.point_ledger for select using(user_id=auth.uid() or public.admin_has_permission('customers.read'));
+create policy operations_owner_admin_read on public.operations for select using(user_id=auth.uid() or public.admin_has_permission('customers.read'));
 create policy activated_numbers_owner_admin_read on public.activated_numbers for select using(subscriber_id in(select id from public.subscribers where user_id=auth.uid()) or public.admin_has_permission('customers.read'));
 create policy protections_owner_admin_read on public.protections for select using(subscriber_id in(select id from public.subscribers where user_id=auth.uid()) or public.admin_has_permission('customers.read'));
 create policy system_notifications_owner_read on public.system_notifications for select using(user_id=auth.uid() or public.admin_has_permission('notifications.read'));
@@ -365,8 +706,32 @@ create policy operation_logs_admin_read on public.operation_logs for select usin
 create policy audit_logs_admin_read on public.audit_logs for select using(public.admin_has_permission('audit.read'));
 create policy maintenance_read on public.maintenance_config for select using(auth.uid() is not null);
 
--- Only RPCs write sensitive state; direct grants are intentionally absent.
-revoke all on all tables in schema public from anon;
-grant select on public.profiles,public.subscribers,public.customer_numbers,public.phone_numbers,public.points_packages,public.payment_methods,public.points_purchase_requests,public.point_balances,public.point_ledger,public.activated_numbers,public.protections,public.system_notifications,public.support_threads,public.support_messages,public.maintenance_config to authenticated;
+-- Only explicitly granted RPCs may write sensitive state; internal helpers are not callable by app roles.
+revoke all on all tables in schema public from public,anon,authenticated;
+grant select on public.profiles,public.subscribers,public.customer_numbers,public.phone_numbers,public.telecom_providers,public.telecom_prefixes,public.provider_tariffs,public.points_packages,public.payment_methods,public.points_purchase_requests,public.point_balances,public.point_ledger,public.operations,public.activated_numbers,public.protections,public.system_notifications,public.support_threads,public.support_messages,public.maintenance_config to authenticated;
+revoke all on all functions in schema public from public,anon,authenticated;
+grant execute on function public.admin_has_permission(text) to authenticated;
+grant execute on function public.create_profile_if_missing(text,text,text,text) to authenticated;
+grant execute on function public.update_customer_profile(text,text,text) to authenticated;
+grant execute on function public.add_customer_number(text) to authenticated;
+grant execute on function public.update_customer_number(uuid,text) to authenticated;
+grant execute on function public.archive_customer_number(uuid) to authenticated;
+grant execute on function public.submit_points_purchase_request(uuid,uuid,text,text) to authenticated;
+grant execute on function public.approve_points_purchase(uuid,text) to authenticated;
+grant execute on function public.reject_points_purchase(uuid,text,text) to authenticated;
+grant execute on function public.cancel_points_purchase(uuid) to authenticated;
+grant execute on function public.resubmit_points_purchase(uuid,uuid,uuid,text) to authenticated;
+grant execute on function public.rebuild_task_plan(uuid,text) to authenticated;
+grant execute on function public.activate_protection(uuid,integer,text) to authenticated;
+grant execute on function public.extend_protection(uuid,integer,text) to authenticated;
+grant execute on function public.renew_protection(uuid,integer,boolean,text) to authenticated;
+grant execute on function public.mark_notification_read(uuid) to authenticated;
+grant execute on function public.get_customer_task_summaries() to authenticated;
+grant execute on function public.send_admin_notification(text,public.admin_notification_target,uuid,text,text) to authenticated;
+grant execute on function public.create_support_thread(text,text) to authenticated;
+grant execute on function public.send_support_message(uuid,text) to authenticated;
+grant execute on function public.close_support_thread(uuid) to authenticated;
+grant execute on function public.admin_adjust_points(uuid,bigint,text,text) to authenticated;
+grant execute on function public.set_maintenance_mode(boolean,text) to authenticated;
 
 commit;

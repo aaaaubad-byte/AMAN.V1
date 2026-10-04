@@ -22,6 +22,7 @@ data class CustomerUiState(
     val authenticated: Boolean = false, val authBusy: Boolean = false, val authError: String? = null, val authNotice: String? = null,
     val signUpMode: Boolean = false, val screen: CustomerScreen = CustomerScreen.HOME, val phase: LoadPhase = LoadPhase.INITIAL,
     val data: CustomerScreenData? = null, val error: String? = null, val stale: Boolean = false, val mutationBusy: Boolean = false, val mutationMessage: String? = null,
+    val navigationBackStack: List<CustomerScreen> = emptyList(),
 )
 
 internal fun JSONArray.objects(): List<JSONObject> = (0 until length()).mapNotNull { optJSONObject(it) }

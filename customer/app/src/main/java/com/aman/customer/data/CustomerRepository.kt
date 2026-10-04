@@ -26,6 +26,7 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
             try {
                 val rows = JSONArray(gateway.select(table, filters.toList()))
                 if (table == "protections") rows.objects().forEach(::normalizeProtection)
+                if (table == "activated_numbers") rows.objects().forEach(::normalizeActivation)
                 result.put(key, rows)
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) {
@@ -40,6 +41,7 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
                 fetch("profile", "profiles", "id" to "eq.$userId", "select" to "id,user_code,full_name,username")
                 fetch("balance", "point_balances", "user_id" to "eq.$userId", "select" to "balance_points,updated_at")
                 fetch("operations", "operations", "user_id" to "eq.$userId", "select" to "id,operation_type,status,points_delta,money_amount,created_at,phone_number_id", "order" to "created_at.desc", "limit" to "5")
+                try { result.put("task_summaries", JSONArray(gateway.rpc("get_customer_task_summaries", JSONObject()))) } catch (e: CancellationException) { throw e } catch (_: Exception) { problems += "task_summaries: ملخص المهام غير متاح حاليًا" }
                 fetch("unread", "system_notifications", "user_id" to "eq.$userId", "is_read" to "eq.false", "select" to "id", "limit" to "100")
                 fetch("admin_alerts", "system_notifications", "user_id" to "eq.$userId", "type" to "eq.admin_alert", "is_read" to "eq.false", "select" to "id,title,created_at", "order" to "created_at.desc", "limit" to "100")
                 fetch("protections", "protections", "activated_numbers.customer_numbers.user_id" to "eq.$userId", "select" to "id,status,expires_at,$protectionSelect", "order" to "expires_at.desc", "limit" to "200")
@@ -48,8 +50,9 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
                 fetch("protections", "protections", "activated_numbers.customer_numbers.user_id" to "eq.$userId", "select" to protectionSelect, "order" to "expires_at.desc", "limit" to "200")
                 fetch("balance", "point_balances", "user_id" to "eq.$userId", "select" to "balance_points")
                 fetch("subscriber", "subscribers", "user_id" to "eq.$userId", "status" to "eq.active", "select" to "id,subscriber_code,status", "limit" to "1")
+                try { result.put("task_summaries", JSONArray(gateway.rpc("get_customer_task_summaries", JSONObject()))) } catch (e: CancellationException) { throw e } catch (_: Exception) { problems += "task_summaries: ملخص المهام غير متاح حاليًا" }
                 if (screen == CustomerScreen.ACTIVATE) {
-                    fetch("numbers", "customer_numbers", "user_id" to "eq.$userId", "status" to "eq.active", "select" to numberSelect, "order" to "added_at.desc", "limit" to "300")
+                    fetch("numbers", "activated_numbers", "customer_numbers.user_id" to "eq.$userId", "select" to "id,activation_code,customer_number_id,subscriber_id,status,activated_at,customer_numbers!inner(id,added_number_code,user_id,phone_number_id,status,added_at,phone_numbers(id,phone_e164,normalized_phone,provider_id,telecom_providers(name,short_name)))", "order" to "activated_at.desc.nullslast", "limit" to "300")
                     fetch("tariffs", "provider_tariffs", "status" to "eq.active", "select" to "provider_id,points_per_day,effective_from,effective_to,status", "order" to "effective_from.desc", "limit" to "300")
                 }
             }
@@ -58,9 +61,10 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
                 fetch("protections", "protections", "activated_numbers.customer_numbers.user_id" to "eq.$userId", "status" to "eq.active", "select" to "activated_number_id,$protectionSelect", "limit" to "300")
             }
             CustomerScreen.POINTS -> {
+                fetch("balance", "point_balances", "user_id" to "eq.$userId", "select" to "balance_points,updated_at")
                 fetch("packages", "points_packages", "status" to "eq.active", "select" to "id,name,points_amount,price_amount,currency,display_order", "order" to "display_order.asc", "limit" to "100")
                 fetch("methods", "payment_methods", "status" to "eq.active", "select" to "id,name,type,account_identifier,instructions,display_order", "order" to "display_order.asc", "limit" to "100")
-                fetch("requests", "points_purchase_requests", "user_id" to "eq.$userId", "select" to "id,request_number,points_amount_snapshot,price_amount_snapshot,currency_snapshot,payment_method_name_snapshot,payment_reference,status,submitted_at,rejection_reason", "order" to "submitted_at.desc", "limit" to "50")
+                fetch("requests", "points_purchase_requests", "user_id" to "eq.$userId", "select" to "id,request_number,package_id,payment_method_id,points_amount_snapshot,price_amount_snapshot,currency_snapshot,payment_method_name_snapshot,payment_reference,status,submitted_at,rejection_reason", "order" to "submitted_at.desc", "limit" to "50")
                 result.put("outbox", JSONArray().also { array -> outbox.entries(userId).forEach(array::put) })
             }
             CustomerScreen.OPERATIONS -> {
@@ -71,6 +75,7 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
             }
             CustomerScreen.ADD_NUMBER -> {
                 fetch("numbers", "customer_numbers", "user_id" to "eq.$userId", "status" to "eq.active", "select" to numberSelect, "order" to "added_at.desc", "limit" to "300")
+                fetch("activation_history", "activated_numbers", "customer_numbers.user_id" to "eq.$userId", "select" to "id,customer_number_id,activation_code,status", "limit" to "500")
                 fetch("prefixes", "telecom_prefixes", "status" to "eq.active", "select" to "id,prefix,provider_id,status,telecom_providers(name,short_name)", "limit" to "500")
                 fetch("protections", "protections", "activated_numbers.customer_numbers.user_id" to "eq.$userId", "status" to "eq.active", "select" to "activated_number_id,$protectionSelect", "limit" to "300")
             }
@@ -132,6 +137,14 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
         if (gateway.currentUserId() == null) throw CustomerContractException("يلزم تسجيل الدخول لإرسال طلب شراء.")
         gateway.rpc("submit_points_purchase_request", JSONObject().put("p_package_id", packageId).put("p_payment_method_id", methodId).put("p_payment_reference", reference.trim()).put("p_idempotency_key", idempotencyKey))
     }
+    suspend fun cancelPurchase(requestId: String) {
+        if (requestId.isBlank()) throw CustomerContractException("معرّف طلب الشراء غير متاح.")
+        gateway.rpc("cancel_points_purchase", JSONObject().put("p_request_id", requestId))
+    }
+    suspend fun resubmitPurchase(requestId: String, packageId: String, methodId: String, reference: String) {
+        if (requestId.isBlank() || packageId.isBlank() || methodId.isBlank() || reference.isBlank()) throw CustomerContractException("اختر الباقة ووسيلة الدفع وأدخل مرجع التحويل.")
+        gateway.rpc("resubmit_points_purchase", JSONObject().put("p_request_id", requestId).put("p_package_id", packageId).put("p_payment_method_id", methodId).put("p_payment_reference", reference.trim()))
+    }
     suspend fun queuePurchase(packageId: String, methodId: String, reference: String, idempotencyKey: String) = withContext(Dispatchers.IO) {
         val userId = gateway.currentUserId() ?: throw CustomerContractException("يلزم تسجيل الدخول لحفظ الطلب.")
         outbox.enqueue(userId, packageId, methodId, reference, idempotencyKey)
@@ -144,10 +157,20 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
         val normalized = normalizePhoneE164(phoneE164) ?: throw CustomerContractException("أدخل رقمًا دوليًا بصيغة + ورقم من 7 إلى 15 خانة.")
         gateway.rpc("add_customer_number", JSONObject().put("p_phone_e164", normalized))
     }
-    suspend fun updateCustomerNumber(@Suppress("UNUSED_PARAMETER") customerNumberId: String, @Suppress("UNUSED_PARAMETER") phoneE164: String) =
-        throw CustomerContractException("DATABASE_CONTRACT_GAP: V7 يتطلب تعديل الرقم، لكن SQL المعتمد لا يعرّف RPC لهذا الإجراء.")
-    suspend fun archiveCustomerNumber(@Suppress("UNUSED_PARAMETER") customerNumberId: String) =
-        throw CustomerContractException("DATABASE_CONTRACT_GAP: V7 يتطلب أرشفة الرقم، لكن SQL المعتمد لا يعرّف RPC لهذا الإجراء.")
+    suspend fun updateCustomerProfile(fullName: String, username: String, phone: String) {
+        if (fullName.isBlank() || username.isBlank()) throw CustomerContractException("أدخل اسم العميل واسم المستخدم.")
+        if (phone.isNotBlank() && normalizePhoneE164(phone) == null) throw CustomerContractException("أدخل رقم الهاتف بصيغة دولية صحيحة أو اتركه فارغًا.")
+        gateway.rpc("update_customer_profile", JSONObject().put("p_full_name", fullName.trim()).put("p_username", username.trim()).put("p_phone", if (phone.isBlank()) JSONObject.NULL else phone.trim()))
+    }
+    suspend fun updateCustomerNumber(customerNumberId: String, phoneE164: String) {
+        val normalized = normalizePhoneE164(phoneE164) ?: throw CustomerContractException("أدخل رقمًا دوليًا بصيغة + ورقم من 7 إلى 15 خانة.")
+        if (customerNumberId.isBlank()) throw CustomerContractException("معرّف الرقم غير متاح؛ حدّث القائمة.")
+        gateway.rpc("update_customer_number", JSONObject().put("p_customer_number_id", customerNumberId).put("p_phone_e164", normalized))
+    }
+    suspend fun archiveCustomerNumber(customerNumberId: String) {
+        if (customerNumberId.isBlank()) throw CustomerContractException("معرّف الرقم غير متاح؛ حدّث القائمة.")
+        gateway.rpc("archive_customer_number", JSONObject().put("p_customer_number_id", customerNumberId))
+    }
 
     suspend fun createSupportThread(subject: String, body: String) {
         if (subject.isBlank() || body.isBlank()) throw CustomerContractException("أدخل موضوع المحادثة ونص الرسالة.")
@@ -173,6 +196,13 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
         gateway.rpc("extend_protection", JSONObject().put("p_protection_id", protectionId).put("p_extension_days", days).put("p_idempotency_key", key))
         operationKeys.clear(userId, "extension", payload)
     }
+    suspend fun renew(activatedNumberId: String, days: Int) {
+        val userId = gateway.currentUserId() ?: throw CustomerContractException("يلزم تسجيل الدخول للتجديد.")
+        if (activatedNumberId.isBlank() || days <= 0) throw CustomerContractException("اختر رقمًا ومدة تجديد صحيحة.")
+        val payload = "$activatedNumberId|$days"; val key = operationKeys.getOrCreate(userId, "renewal", payload)
+        gateway.rpc("renew_protection", JSONObject().put("p_activated_number_id", activatedNumberId).put("p_duration_days", days).put("p_confirmed", true).put("p_idempotency_key", key))
+        operationKeys.clear(userId, "renewal", payload)
+    }
     suspend fun markRead(id: String) {
         if (id.isBlank()) throw CustomerContractException("معرّف الإشعار غير متاح.")
         gateway.rpc("mark_notification_read", JSONObject().put("p_notification_id", id))
@@ -188,6 +218,16 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
         }
         if (phone != null) row.put("phone_numbers", phone)
     }
+    private fun normalizeActivation(row: JSONObject) {
+        val customerNumber = firstObject(row.opt("customer_numbers"))
+        val phone = firstObject(customerNumber?.opt("phone_numbers"))
+        if (customerNumber != null) {
+            row.put("user_id", customerNumber.optString("user_id"))
+            row.put("phone_number_id", customerNumber.optString("phone_number_id"))
+            row.put("added_number_code", customerNumber.optString("added_number_code"))
+        }
+        if (phone != null) row.put("phone_numbers", phone)
+    }
     private fun firstObject(value: Any?): JSONObject? = when (value) { is JSONObject -> value; is JSONArray -> value.optJSONObject(0); else -> null }
 
     private fun build(screen: CustomerScreen, payload: JSONObject, notes: List<String>, loadedAt: Long = System.currentTimeMillis()): CustomerScreenData {
@@ -197,7 +237,7 @@ class CustomerRepository(private val context: Context, val gateway: SupabaseGate
             CustomerScreen.ADMIN_ALERTS -> "alerts"; CustomerScreen.SUPPORT -> "threads"; CustomerScreen.NOTIFICATIONS -> "notifications"; CustomerScreen.REPORTS -> "ledger"
             CustomerScreen.ACCOUNT -> "profile"; CustomerScreen.SEARCH -> "numbers"; CustomerScreen.ABOUT -> ""
         }
-        val knownKeys = listOf("profile","balance","operations","unread","admin_alerts","protections","subscriber","numbers","tariffs","packages","methods","requests","ledger","purchases","prefixes","alerts","threads","messages","notifications","outbox")
+        val knownKeys = listOf("profile","balance","operations","unread","admin_alerts","protections","subscriber","numbers","tariffs","packages","methods","requests","ledger","purchases","prefixes","alerts","threads","messages","notifications","outbox","task_summaries","activation_history")
         knownKeys.forEach { key -> payload.optJSONArray(key)?.let { related[key] = it } }
         var records = payload.optJSONArray(mainKey)?.objects().orEmpty().map { row ->
             val source = when (screen) { CustomerScreen.HOME, CustomerScreen.OPERATIONS -> "operations"; CustomerScreen.ACTIVE_NUMBERS, CustomerScreen.ACTIVATE, CustomerScreen.EXTEND -> "protections"; CustomerScreen.INACTIVE_NUMBERS, CustomerScreen.ADD_NUMBER -> "customer_numbers"; CustomerScreen.POINTS -> "points_purchase_requests"; CustomerScreen.ADMIN_ALERTS, CustomerScreen.NOTIFICATIONS -> "system_notifications"; CustomerScreen.SUPPORT -> "support_threads"; CustomerScreen.REPORTS -> "point_ledger"; CustomerScreen.ACCOUNT -> "profiles"; CustomerScreen.SEARCH -> "customer_numbers"; CustomerScreen.ABOUT -> "" }

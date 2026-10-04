@@ -51,6 +51,11 @@ class SupabaseGateway(context: Context) {
         result
     }
 
+    suspend fun updatePassword(newPassword: String) = withContext(Dispatchers.IO) {
+        if (newPassword.length < 8) throw CustomerContractException("كلمة المرور الجديدة يجب ألا تقل عن 8 أحرف.")
+        request("$baseUrl/auth/v1/user", "PATCH", JSONObject().put("password", newPassword).toString(), authenticatedToken())
+    }
+
     suspend fun select(table: String, params: List<Pair<String, String>>): String = withContext(Dispatchers.IO) {
         val urlBuilder = "$baseUrl/rest/v1/$table".toHttpUrl().newBuilder()
         params.forEach { (key, value) -> urlBuilder.addQueryParameter(key, value) }
@@ -61,7 +66,8 @@ class SupabaseGateway(context: Context) {
     suspend fun rpc(name: String, arguments: JSONObject): String = withContext(Dispatchers.IO) {
         val allowed = setOf(
             "create_profile_if_missing", "add_customer_number", "submit_points_purchase_request",
-            "activate_protection", "extend_protection", "renew_protection", "mark_notification_read",
+            "update_customer_profile", "update_customer_number", "archive_customer_number", "activate_protection", "extend_protection", "renew_protection", "mark_notification_read",
+            "get_customer_task_summaries", "cancel_points_purchase", "resubmit_points_purchase",
             "create_support_thread", "send_support_message",
         )
         if (name !in allowed) throw CustomerContractException("عملية Backend غير معرّفة في عقد V7: $name")
@@ -99,6 +105,7 @@ class SupabaseGateway(context: Context) {
         when (method) {
             "GET" -> builder.get()
             "POST" -> builder.post((body ?: "{}").toRequestBody(jsonType))
+            "PATCH" -> builder.patch((body ?: "{}").toRequestBody(jsonType))
             else -> throw CustomerContractException("HTTP method غير مدعوم: $method")
         }
         try {

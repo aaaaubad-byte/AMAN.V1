@@ -29,6 +29,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.runtime.Composable
@@ -57,11 +58,12 @@ fun AmanCustomerApp(context: Context) {
         AuthScreen(vm)
         return
     }
+    BackHandler(enabled = state.navigationBackStack.isNotEmpty()) { vm.back() }
     val tabs = listOf(CustomerScreen.ABOUT, CustomerScreen.SEARCH, CustomerScreen.HOME, CustomerScreen.REPORTS, CustomerScreen.ACCOUNT)
     Scaffold(containerColor = MaterialTheme.colorScheme.background, bottomBar = {
         NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
             tabs.forEach { destination ->
-                NavigationBarItem(selected = state.screen == destination, onClick = { vm.navigate(destination) },
+                NavigationBarItem(selected = state.screen == destination, onClick = { vm.selectTab(destination) },
                     modifier = Modifier.traceElement(when (destination) {
                         CustomerScreen.ABOUT -> "C01.NAV.ABOUT"; CustomerScreen.SEARCH -> "C01.NAV.SEARCH"; CustomerScreen.HOME -> "C01.NAV.HOME"
                         CustomerScreen.REPORTS -> "C01.NAV.REPORTS"; else -> "C01.NAV.ACCOUNT"
@@ -75,6 +77,12 @@ fun AmanCustomerApp(context: Context) {
             val unreadCount = state.data?.related?.get("unread")?.length() ?: 0
             BrandHeader(state.screen.title, unreadCount.takeIf { state.screen == CustomerScreen.HOME },
                 onNotifications = if (state.screen == CustomerScreen.HOME) ({ vm.navigate(CustomerScreen.NOTIFICATIONS) }) else null)
+            if (state.navigationBackStack.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { vm.back() }, modifier = Modifier.traceElement("${state.screen.id}.HEADER.BACK")) { Text("رجوع") }
+                    TextButton(onClick = { vm.load(state.screen) }, modifier = Modifier.traceElement("${state.screen.id}.HEADER.REFRESH")) { Text("تحديث") }
+                }
+            }
             if (state.stale) NoticeBanner("تعرض بيانات قديمة أو جزئية · آخر تحديث ${state.data?.loadedAt?.takeIf { it > 0L }?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it)) } ?: "غير معروف"}", warning = true)
             if (state.phase == LoadPhase.LOADING && state.data == null) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }

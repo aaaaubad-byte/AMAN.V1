@@ -87,3 +87,17 @@ Created a clean-from-zero artifact:
 - **SQL artifact commit:** `6e2eaad7e0b29cea72a0a398f73fd4c04533d033`
 - **Status finalization commit:** `cdd9640398578b769db50feecf7edaf236ecd496`
 - **Push result:** successful; remote `main` points to `3e40f1616f77b23c5decbbabf5dec18bcb0b2faa` after review.
+
+
+## Customer Phase SQL Revision — 2026-10-05
+
+Following an explicit user instruction during Customer Phase to permit database changes, only the canonical new artifact `database/AMAN_V7_DATABASE.sql` was revised. Historical migrations and Admin app files remain untouched. Static revision highlights:
+
+- Added customer-number update/archive and profile-update RPCs with owner checks and audit entries.
+- Added atomic activation, extension, and renewal paths, with point balance locks, ledger/operation rows, idempotency, notifications, task-plan rebuild calls, and retained task history.
+- Added inactive activated-number candidate creation on add-number/subscriber approval; made X code nullable until first successful activation.
+- Added client-safe task summary RPC, customer-targeted system notifications, and support input validation.
+- Added RLS/read grants for active provider catalog and owner operations; replaced implicit broad function/table grants with explicit authenticated RPC/read grants.
+- Purchase O public identifier and request idempotency key are now separate columns.
+
+**Verification remains limited:** `pglast` parsed 164 SQL statements. Android build/tests could not reach Kotlin compilation because Android SDK location is missing. SQL has not been executed against PostgreSQL/Supabase, and its PL/pgSQL runtime semantics, RLS, concurrency and rollback are NOT VERIFIED. Task reschedule/execute/cancel and manual points adjustment remain explicit UNRESOLVED placeholders. This revision is not a claim of production readiness.

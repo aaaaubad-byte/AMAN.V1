@@ -37,6 +37,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
     val state: StateFlow<CustomerUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
     private var searchJob: Job? = null
+    private val rootTabs = setOf(CustomerScreen.ABOUT, CustomerScreen.SEARCH, CustomerScreen.HOME, CustomerScreen.REPORTS, CustomerScreen.ACCOUNT)
 
     init {
         AppContextHolder.context = appContext
@@ -95,12 +96,31 @@ class CustomerViewModel(context: Context) : ViewModel() {
     }
 
     fun navigate(screen: CustomerScreen) {
+        if (screen in rootTabs) return selectTab(screen)
         actionLog.record("navigate.${screen.id}", "start")
         loadJob?.cancel()
-        _state.value = _state.value.copy(screen = screen, mutationMessage = null, error = null)
+        val current = _state.value
+        val stack = if (current.screen == screen) current.navigationBackStack else current.navigationBackStack + current.screen
+        _state.value = current.copy(screen = screen, navigationBackStack = stack, mutationMessage = null, error = null)
         if (screen == CustomerScreen.ABOUT) {
             _state.value = _state.value.copy(phase = LoadPhase.LOADED, data = CustomerScreenData(screen), stale = false)
         } else load(screen)
+    }
+
+    fun selectTab(screen: CustomerScreen) {
+        if (screen !in rootTabs) return navigate(screen)
+        loadJob?.cancel()
+        _state.value = _state.value.copy(screen = screen, navigationBackStack = emptyList(), mutationMessage = null, error = null)
+        if (screen == CustomerScreen.ABOUT) _state.value = _state.value.copy(phase = LoadPhase.LOADED, data = CustomerScreenData(screen), stale = false)
+        else load(screen)
+    }
+
+    fun back() {
+        val current = _state.value
+        val previous = current.navigationBackStack.lastOrNull() ?: return
+        _state.value = current.copy(screen = previous, navigationBackStack = current.navigationBackStack.dropLast(1), mutationMessage = null, error = null)
+        if (previous == CustomerScreen.ABOUT) _state.value = _state.value.copy(phase = LoadPhase.LOADED, data = CustomerScreenData(previous), stale = false)
+        else load(previous)
     }
 
     fun search(query: String) {
@@ -119,6 +139,11 @@ class CustomerViewModel(context: Context) : ViewModel() {
         loadJob?.cancel()
         val cached = if (search.isBlank()) repository.cached(screen) else null
         val selectedSupportThread = _state.value.data?.takeIf { screen == CustomerScreen.SUPPORT && it.screen == screen }?.selectedThreadId
+        if (!repository.isOnline()) {
+            _state.value = _state.value.copy(screen = screen, phase = LoadPhase.OFFLINE, data = cached,
+                stale = cached != null, error = if (cached == null) "لا يوجد اتصال بالإنترنت ولا توجد نسخة محلية لهذه الشاشة." else "أنت غير متصل؛ هذه آخر نسخة محفوظة وقد تكون قديمة.")
+            return
+        }
         _state.value = _state.value.copy(screen = screen, phase = LoadPhase.LOADING, data = cached, stale = cached != null, error = null)
         loadJob = viewModelScope.launch {
             try {
@@ -126,14 +151,20 @@ class CustomerViewModel(context: Context) : ViewModel() {
                 if (_state.value.screen != screen) return@launch
                 val displayData = if (selectedSupportThread.isNullOrBlank()) data else data.copy(selectedThreadId = selectedSupportThread)
                 _state.value = _state.value.copy(data = displayData,
-                    phase = if (data.records.isEmpty() && data.related.values.all { it.length() == 0 }) LoadPhase.EMPTY else LoadPhase.LOADED,
+                    phase = when {
+                        data.errorNotes.isNotEmpty() && !repository.isOnline() -> LoadPhase.OFFLINE
+                        data.errorNotes.isNotEmpty() -> LoadPhase.ERROR
+                        data.records.isEmpty() && data.related.values.all { it.length() == 0 } -> LoadPhase.EMPTY
+                        else -> LoadPhase.LOADED
+                    },
                     stale = data.errorNotes.isNotEmpty(), error = data.errorNotes.takeIf { it.isNotEmpty() }?.joinToString("\n"))
                 if (!selectedSupportThread.isNullOrBlank() && screen == CustomerScreen.SUPPORT) openSupportThread(selectedSupportThread)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (_state.value.screen != screen) return@launch
+                if (isSessionExpired(e)) { expireSession(); return@launch }
                 val fallback = cached ?: repository.cached(screen)
-                _state.value = _state.value.copy(data = fallback, phase = if (fallback != null) LoadPhase.OFFLINE else LoadPhase.ERROR,
+                _state.value = _state.value.copy(data = fallback, phase = if (!repository.isOnline() || fallback != null) LoadPhase.OFFLINE else LoadPhase.ERROR,
                     stale = fallback != null, error = e.message ?: "تعذر تحميل البيانات.")
             }
         }
@@ -172,6 +203,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = "وصل طلب الشراء إلى الخادم للمراجعة؛ لم تُضف النقاط بعد.")
                 load(_state.value.screen)
             } catch (e: CustomerBackendException) {
+                if (isSessionExpired(e)) { expireSession(); return@launch }
                 actionLog.record("purchase.submit", "error", e.message)
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = mutationMessage(e.message))
             } catch (e: IOException) {
@@ -182,17 +214,23 @@ class CustomerViewModel(context: Context) : ViewModel() {
                 scheduleCustomerOneTimeRefresh(appContext)
                 load(_state.value.screen)
             } catch (e: Exception) {
+                if (isSessionExpired(e)) { expireSession(); return@launch }
                 actionLog.record("purchase.submit", "error", e.message)
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = mutationMessage(e.message))
             }
         }
     }
-    fun activate(activatedNumberId: String, days: Int) = mutate("activate_protection", "تم إرسال طلب التفعيل إلى العقد الكنسي.") { repository.activate(activatedNumberId, days) }
-    fun extend(protectionId: String, days: Int) = mutate("extend_protection", "تم إرسال طلب التمديد إلى العقد الكنسي.") { repository.extend(protectionId, days) }
+    fun activate(activatedNumberId: String, days: Int) = mutate("activate_protection", "أكد الخادم تفعيل الحماية وتسجيل العملية.") { repository.activate(activatedNumberId, days) }
+    fun extend(protectionId: String, days: Int) = mutate("extend_protection", "أكد الخادم تمديد الحماية وتسجيل العملية.") { repository.extend(protectionId, days) }
+    fun renew(activatedNumberId: String, days: Int) = mutate("renew_protection", "تم تجديد الحماية بعد تأكيد الخادم.") { repository.renew(activatedNumberId, days) }
+    fun cancelPurchase(requestId: String) = mutate("cancel_points_purchase", "تم إلغاء طلب الشراء بعد تأكيد الخادم.") { repository.cancelPurchase(requestId) }
+    fun resubmitPurchase(requestId: String, packageId: String, methodId: String, reference: String) = mutate("resubmit_points_purchase", "أعيد إرسال الطلب للمراجعة مع الاحتفاظ برقم الطلب نفسه.") { repository.resubmitPurchase(requestId, packageId, methodId, reference) }
     fun markRead(notificationId: String) = mutate("mark_notification_read", "تم تحديث حالة قراءة الإشعار.") { repository.markRead(notificationId) }
     fun addCustomerNumber(phoneE164: String) = mutate("add_customer_number", "تمت إضافة الرقم إلى حسابك.") { repository.addCustomerNumber(phoneE164) }
-    fun updateCustomerNumber(customerNumberId: String, phoneE164: String) = mutate("DATABASE_CONTRACT_GAP.update_number", "تم تحديث الرقم.") { repository.updateCustomerNumber(customerNumberId, phoneE164) }
-    fun archiveCustomerNumber(customerNumberId: String) = mutate("DATABASE_CONTRACT_GAP.archive_number", "تمت أرشفة الرقم.") { repository.archiveCustomerNumber(customerNumberId) }
+    fun updateCustomerNumber(customerNumberId: String, phoneE164: String) = mutate("update_customer_number", "تم تحديث الرقم بعد تأكيد الخادم.") { repository.updateCustomerNumber(customerNumberId, phoneE164) }
+    fun archiveCustomerNumber(customerNumberId: String) = mutate("archive_customer_number", "تمت أرشفة الرقم بعد تأكيد الخادم.") { repository.archiveCustomerNumber(customerNumberId) }
+    fun updateProfile(fullName: String, username: String, phone: String) = mutate("update_customer_profile", "تم حفظ بيانات الملف الشخصي.") { repository.updateCustomerProfile(fullName, username, phone) }
+    fun updatePassword(password: String) = mutate("auth.update_password", "تم تحديث كلمة المرور عبر Supabase Auth.") { gateway.updatePassword(password) }
     fun createSupportThread(subject: String, body: String) = mutate("create_support_thread", "تم إرسال الرسالة وإنشاء محادثة الدعم.") { repository.createSupportThread(subject, body) }
     fun sendSupportMessage(threadId: String, body: String) = mutate("send_support_message", "تم إرسال الرسالة إلى المحادثة.") { repository.sendSupportMessage(threadId, body) }
 
@@ -214,6 +252,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
+                if (isSessionExpired(e)) { expireSession(); return@launch }
                 if (_state.value.screen == CustomerScreen.SUPPORT && _state.value.data?.selectedThreadId == threadId) {
                     _state.value = _state.value.copy(data = _state.value.data?.copy(messagesLoading = false), error = "تعذر تحميل رسائل المحادثة. تحقق من الاتصال ثم أعد المحاولة.")
                 }
@@ -242,6 +281,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
                 load(_state.value.screen)
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
+                if (isSessionExpired(e)) { expireSession(); return@launch }
                 actionLog.record(actionName, "error", e.message)
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = mutationMessage(e.message))
             }
@@ -259,6 +299,18 @@ class CustomerViewModel(context: Context) : ViewModel() {
         }
     }
 
+    private fun isSessionExpired(error: Throwable): Boolean {
+        val message = error.message.orEmpty()
+        return message.contains("انتهت جلسة الدخول", true) || message.contains("JWT expired", true) ||
+            message.contains("invalid JWT", true) || message.contains("PGRST301", true)
+    }
+
+    private suspend fun expireSession() {
+        runCatching { gateway.clearSession() }
+        actionLog.record("auth.session", "expired")
+        _state.value = CustomerUiState(authenticated = false, authError = "انتهت جلسة الدخول. سجّل الدخول مجددًا؛ لم يتم تأكيد العملية.")
+    }
+
     private fun authMessage(message: String?): String = when {
         message.isNullOrBlank() -> "تعذر إتمام المصادقة. تحقق من البيانات والاتصال."
         message.contains("invalid login", true) || message.contains("credentials", true) -> "تعذر تسجيل الدخول. تحقق من البريد الإلكتروني وكلمة المرور."
@@ -269,7 +321,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
     private fun mutationMessage(message: String?): String = when {
         message.isNullOrBlank() -> "تعذر تنفيذ العملية. لم يتم تأكيد نجاحها؛ حاول مجددًا."
         message.contains("insufficient_points", true) -> "رصيد النقاط غير كافٍ لإتمام العملية. لم يتم الخصم."
-        message.contains("phone_already_protected", true) -> "للرقم حماية نشطة بالفعل. لم يتم الخصم."
+        message.contains("phone_already_protected", true) || message.contains("activation_already_used_use_renewal", true) -> "سبق تفعيل الرقم؛ استخدم مسار التمديد أو التجديد المناسب."
         message.contains("active_subscriber_required", true) -> "يلزم وجود اشتراك عميل نشط لإتمام التفعيل."
         message.contains("protection_not_owned_or_inactive", true) -> "تعذر التحقق من ملكية الحماية أو حالتها؛ لم يتم التمديد."
         message.contains("tariff_not_found", true) -> "تعرفة الحماية غير متاحة؛ لم يتم تنفيذ العملية."
@@ -280,8 +332,12 @@ class CustomerViewModel(context: Context) : ViewModel() {
         message.contains("unknown_phone_prefix", true) -> "لم يتعرف الخادم على بادئة الرقم النشطة؛ لم يُحفظ الرقم."
         message.contains("protected_number_cannot_change", true) || message.contains("protected_number_cannot_archive", true) -> "لا يمكن تغيير هوية رقم عليه حماية نشطة أو أرشفته."
         message.contains("customer_number_not_found", true) -> "تعذر العثور على علاقة الرقم في حسابك. حدّث القائمة."
+        message.contains("activated_number_not_found", true) || message.contains("number_not_owned_or_inactive", true) -> "الرقم غير متاح أو لم يعد مرتبطًا بحسابك. حدّث القائمة."
+        message.contains("activated_number_identity_immutable", true) -> "لا يمكن تغيير رقم له سجل حماية سابق حفاظًا على سجل التفعيل."
+        message.contains("duplicate_customer_number", true) -> "هذا الرقم مرتبط بالفعل بحسابك."
+        message.contains("protection_expired_use_renewal", true) || message.contains("renewal_requires_expired_protection", true) -> "حالة الحماية تغيرت؛ حدّث البيانات واستخدم المسار المناسب."
         message.contains("support_thread_not_owned_or_closed", true) || message.contains("support_thread_not_found_or_closed", true) -> "المحادثة غير متاحة أو مغلقة؛ حدّث سجل التواصل."
-        message.contains("support_subject_required", true) || message.contains("support_body_required", true) -> "أدخل موضوع المحادثة والرسالة المطلوبة."
+        message.contains("support_subject_required", true) || message.contains("support_body_required", true) || message.contains("support_subject_and_body_required", true) -> "أدخل موضوع المحادثة والرسالة المطلوبة."
         message.contains("invalid_duration", true) || message.contains("invalid_extension_days", true) -> "المدة المدخلة غير صالحة."
         else -> "تعذر تأكيد نتيجة العملية من الخادم. حدّث السجل قبل إعادة المحاولة لتجنب تكرارها."
     }
