@@ -21,6 +21,8 @@ data class CustomerScreenData(
     val related: Map<String, JSONArray> = emptyMap(),
     val errorNotes: List<String> = emptyList(),
     val loadedAt: Long = System.currentTimeMillis(),
+    val selectedThreadId: String? = null,
+    val messagesLoading: Boolean = false,
 )
 
 enum class LoadPhase { INITIAL, LOADING, LOADED, EMPTY, OFFLINE, ERROR }
@@ -75,10 +77,12 @@ fun toCustomerRecord(table: String, row: JSONObject): CustomerRecord {
         "customer_numbers" -> row.text("added_at")
         else -> row.text("created_at", "submitted_at", "updated_at", "status")
     }.trim(' ', '·').split(" · ").joinToString(" · ") { statusLabel(it) }
-    val detailKeys = listOf("phone_e164", "full_name", "username", "email", "account_status", "status", "added_at", "started_at", "expires_at", "duration_days", "points_per_day_snapshot", "total_points_snapshot", "points_amount_snapshot", "price_amount_snapshot", "currency_snapshot", "payment_method_name_snapshot", "request_number", "submitted_at", "reviewed_at", "rejection_reason", "operation_type", "points_delta", "money_amount", "notification_type", "title", "content", "read_at", "subject", "last_reply_at", "balance_points", "amount", "balance_after", "entry_type", "description", "name", "points_amount", "price_amount", "currency", "instructions", "prefix", "points_per_day")
+    val detailKeys = listOf("id", "phone_e164", "full_name", "username", "email", "account_status", "status", "added_at", "created_at", "updated_at", "started_at", "expires_at", "duration_days", "points_per_day_snapshot", "total_points_snapshot", "points_amount_snapshot", "price_amount_snapshot", "currency_snapshot", "payment_method_name_snapshot", "request_number", "submitted_at", "reviewed_at", "rejection_reason", "operation_type", "points_delta", "money_amount", "metadata", "notification_type", "title", "content", "read_at", "subject", "last_reply_at", "balance_points", "amount", "balance_after", "entry_type", "description", "reference_type", "reference_id", "name", "points_amount", "price_amount", "currency", "instructions", "prefix", "points_per_day")
     val pairs = detailKeys.mapNotNull { key -> row.opt(key).takeIf { it != null && it != JSONObject.NULL }?.let { key to it.toString() } }
     val providerName = provider?.text("name", "short_name").orEmpty()
-    val details = if (providerName.isBlank()) pairs else pairs + ("شركة الاتصالات" to providerName)
+    val phoneValue = phone?.text("phone_e164", "normalized_phone").orEmpty()
+    val details = pairs + listOfNotNull(phoneValue.takeIf(String::isNotBlank)?.let { "phone_e164" to it }) +
+        listOfNotNull(providerName.takeIf(String::isNotBlank)?.let { "شركة الاتصالات" to it })
     return CustomerRecord(table, row.optString("id", row.optString("user_id")), title, subtitle, details, row)
 }
 
@@ -89,9 +93,10 @@ fun discoverProvider(phoneDigits: String, prefixes: JSONArray): Pair<String, Str
         ProviderPrefix(row.optString("prefix"), row.optJSONObject("telecom_providers")?.text("name", "short_name").orEmpty(), row.optString("status") == "active")
     })
 
-fun discoverProvider(phoneDigits: String, prefixes: List<ProviderPrefix>): Pair<String, String>? =
-    prefixes.asSequence().filter { it.active && it.prefix.isNotBlank() && phoneDigits.startsWith(it.prefix) }
-        .maxByOrNull { it.prefix.length }?.let { it.providerName to it.prefix }
+fun discoverProvider(phoneNumber: String, prefixes: List<ProviderPrefix>): Pair<String, String>? =
+    prefixes.asSequence().map { it to phoneDigits(it.prefix) }
+        .filter { (prefix, normalized) -> prefix.active && normalized.isNotBlank() && phoneDigits(phoneNumber).startsWith(normalized) }
+        .maxByOrNull { it.second.length }?.let { it.first.providerName to it.first.prefix }
 
 fun activationCost(days: Int, dailyPoints: Int): Long? = if (days <= 0 || dailyPoints <= 0) null else days.toLong() * dailyPoints.toLong()
 
@@ -102,7 +107,7 @@ private fun statusLabel(value: String): String = when (value) {
     "succeeded" -> "ناجح"; "failed" -> "فشل"; "processing" -> "قيد التنفيذ"; else -> value
 }
 private fun operationLabel(value: String): String = when (value) {
-    "points_purchase" -> "شراء نقاط"; "points_approval" -> "اعتماد نقاط"; "points_rejection" -> "رفض طلب نقاط"
+    "points_purchase" -> "شراء نقاط"; "points_approval" -> "اعتماد/إضافة نقاط"; "points_rejection" -> "رفض طلب نقاط"
     "number_added" -> "إضافة رقم"; "protection_activation" -> "تفعيل حماية"; "protection_extension" -> "تمديد حماية"
     "payment_task" -> "عملية مرتبطة بالخدمة"; else -> value
 }

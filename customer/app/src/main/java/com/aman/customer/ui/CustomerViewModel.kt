@@ -23,8 +23,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
 import java.io.IOException
+import org.json.JSONArray
 
 class CustomerViewModel(context: Context) : ViewModel() {
     private val appContext = context.applicationContext
@@ -35,7 +35,6 @@ class CustomerViewModel(context: Context) : ViewModel() {
     val state: StateFlow<CustomerUiState> = _state.asStateFlow()
     private var loadJob: Job? = null
     private var searchJob: Job? = null
-    private val purchaseIntentKeys = mutableMapOf<String, String>()
 
     init {
         AppContextHolder.context = appContext
@@ -60,7 +59,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
                     val result = withContext(Dispatchers.IO) { gateway.signUp(email, password, fullName) }
                     if (gateway.hasSession()) {
                         _state.value = _state.value.copy(authenticated = true, authBusy = false,
-                            authNotice = "تم إنشاء جلسة المصادقة. قد يتطلب ملف العميل تهيئة خلفية منفصلة؛ راجع شاشة الحساب بعد الدخول.")
+                            authNotice = "تم إنشاء جلسة المصادقة. يُنشأ ملف العميل ورصيد النقاط بواسطة trigger الخلفية؛ راجع شاشة الحساب بعد الدخول.")
                         scheduleCustomerRefresh(appContext)
                         scheduleCustomerOneTimeRefresh(appContext)
                         load(CustomerScreen.HOME)
@@ -104,14 +103,17 @@ class CustomerViewModel(context: Context) : ViewModel() {
         if (!gateway.hasSession()) return
         loadJob?.cancel()
         val cached = if (search.isBlank()) repository.cached(screen) else null
+        val selectedSupportThread = _state.value.data?.takeIf { screen == CustomerScreen.SUPPORT && it.screen == screen }?.selectedThreadId
         _state.value = _state.value.copy(screen = screen, phase = LoadPhase.LOADING, data = cached, stale = cached != null, error = null)
         loadJob = viewModelScope.launch {
             try {
                 val data = repository.load(screen, search)
                 if (_state.value.screen != screen) return@launch
-                _state.value = _state.value.copy(data = data,
+                val displayData = if (selectedSupportThread.isNullOrBlank()) data else data.copy(selectedThreadId = selectedSupportThread)
+                _state.value = _state.value.copy(data = displayData,
                     phase = if (data.records.isEmpty() && data.related.values.all { it.length() == 0 }) LoadPhase.EMPTY else LoadPhase.LOADED,
                     stale = data.errorNotes.isNotEmpty(), error = data.errorNotes.takeIf { it.isNotEmpty() }?.joinToString("\n"))
+                if (!selectedSupportThread.isNullOrBlank() && screen == CustomerScreen.SUPPORT) openSupportThread(selectedSupportThread)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (_state.value.screen != screen) return@launch
@@ -123,11 +125,10 @@ class CustomerViewModel(context: Context) : ViewModel() {
     }
 
     fun submitPurchase(packageId: String, methodId: String, reference: String) {
-        val intent = "$packageId|$methodId|${reference.trim()}"
-        val key = purchaseIntentKeys.getOrPut(intent) { UUID.randomUUID().toString() }
         viewModelScope.launch {
             _state.value = _state.value.copy(mutationBusy = true, mutationMessage = null)
             try {
+                val key = withContext(Dispatchers.IO) { repository.purchaseIdempotencyKey(packageId, methodId, reference) }
                 val userId = gateway.currentUserId()
                 val existing = if (userId == null) null else withContext(Dispatchers.IO) {
                     repository.queuedPurchases(userId).firstOrNull { it.optString("package_id") == packageId &&
@@ -168,6 +169,40 @@ class CustomerViewModel(context: Context) : ViewModel() {
     fun activate(phoneId: String, days: Int) = mutate("تم التحقق من طلب التفعيل وتنفيذه عبر الخادم.") { repository.activate(phoneId, days) }
     fun extend(protectionId: String, days: Int) = mutate("تم التحقق من طلب التمديد وتنفيذه عبر الخادم.") { repository.extend(protectionId, days) }
     fun markRead(notificationId: String) = mutate("تم تحديث حالة قراءة الإشعار.") { repository.markRead(notificationId) }
+    fun addCustomerNumber(phoneE164: String) = mutate("تمت إضافة الرقم إلى حسابك.") { repository.addCustomerNumber(phoneE164) }
+    fun updateCustomerNumber(customerNumberId: String, phoneE164: String) = mutate("تم تحديث الرقم.") { repository.updateCustomerNumber(customerNumberId, phoneE164) }
+    fun archiveCustomerNumber(customerNumberId: String) = mutate("تمت أرشفة الرقم.") { repository.archiveCustomerNumber(customerNumberId) }
+    fun createSupportThread(subject: String, body: String) = mutate("تم إرسال الرسالة وإنشاء محادثة الدعم.") { repository.createSupportThread(subject, body) }
+    fun sendSupportMessage(threadId: String, body: String) = mutate("تم إرسال الرسالة إلى المحادثة.") { repository.sendSupportMessage(threadId, body) }
+
+    fun openSupportThread(threadId: String) {
+        val current = _state.value.data ?: return
+        if (_state.value.screen != CustomerScreen.SUPPORT || threadId.isBlank()) return
+        _state.value = _state.value.copy(data = current.copy(selectedThreadId = threadId, messagesLoading = true), error = null)
+        if (!repository.isOnline()) {
+            _state.value = _state.value.copy(data = _state.value.data?.copy(messagesLoading = false))
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val messages = withContext(Dispatchers.IO) { repository.loadSupportMessages(threadId) }
+                if (_state.value.screen == CustomerScreen.SUPPORT && _state.value.data?.selectedThreadId == threadId) {
+                    val data = _state.value.data ?: return@launch
+                    _state.value = _state.value.copy(data = data.copy(related = data.related + ("messages" to messages), messagesLoading = false))
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (_state.value.screen == CustomerScreen.SUPPORT && _state.value.data?.selectedThreadId == threadId) {
+                    _state.value = _state.value.copy(data = _state.value.data?.copy(messagesLoading = false), error = "تعذر تحميل رسائل المحادثة. تحقق من الاتصال ثم أعد المحاولة.")
+                }
+            }
+        }
+    }
+
+    fun clearSupportSelection() {
+        val current = _state.value.data ?: return
+        if (_state.value.screen == CustomerScreen.SUPPORT) _state.value = _state.value.copy(data = current.copy(selectedThreadId = null))
+    }
 
     private fun mutate(success: String, action: suspend () -> Unit) {
         viewModelScope.launch {
@@ -180,6 +215,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
                 action()
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = success)
                 load(_state.value.screen)
+            } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
                 _state.value = _state.value.copy(mutationBusy = false, mutationMessage = mutationMessage(e.message))
             }
@@ -212,8 +248,14 @@ class CustomerViewModel(context: Context) : ViewModel() {
         message.contains("phone_not_found", true) -> "الرقم غير متاح؛ لم يتم تنفيذ العملية."
         message.contains("package_unavailable", true) -> "الباقة لم تعد متاحة. حدّث القائمة واختر باقة أخرى."
         message.contains("payment_method_unavailable", true) -> "وسيلة الدفع لم تعد متاحة. حدّث القائمة واختر وسيلة أخرى."
+        message.contains("invalid_phone", true) -> "صيغة الرقم غير صالحة. استخدم رقمًا دوليًا يبدأ بـ +."
+        message.contains("unknown_phone_prefix", true) -> "لم يتعرف الخادم على بادئة الرقم النشطة؛ لم يُحفظ الرقم."
+        message.contains("protected_number_cannot_change", true) || message.contains("protected_number_cannot_archive", true) -> "لا يمكن تغيير هوية رقم عليه حماية نشطة أو أرشفته."
+        message.contains("customer_number_not_found", true) -> "تعذر العثور على علاقة الرقم في حسابك. حدّث القائمة."
+        message.contains("support_thread_not_owned_or_closed", true) || message.contains("support_thread_not_found_or_closed", true) -> "المحادثة غير متاحة أو مغلقة؛ حدّث سجل التواصل."
+        message.contains("support_subject_required", true) || message.contains("support_body_required", true) -> "أدخل موضوع المحادثة والرسالة المطلوبة."
         message.contains("invalid_duration", true) || message.contains("invalid_extension_days", true) -> "المدة المدخلة غير صالحة."
-        else -> "تعذر تأكيد نتيجة العملية من الخادم. لا تعِد إرسال تفعيل أو تمديد عند انقطاع الاتصال قبل التأكد من سجل العمليات أو التواصل مع الإدارة."
+        else -> "تعذر تأكيد نتيجة العملية من الخادم. حدّث السجل قبل إعادة المحاولة لتجنب تكرارها."
     }
 
     companion object {

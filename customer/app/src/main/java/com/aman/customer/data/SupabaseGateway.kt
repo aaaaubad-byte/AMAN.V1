@@ -61,7 +61,11 @@ class SupabaseGateway(context: Context) {
     }
 
     suspend fun rpc(name: String, arguments: JSONObject): String = withContext(Dispatchers.IO) {
-        val allowed = setOf("submit_points_purchase", "activate_protection", "extend_protection")
+        val allowed = setOf(
+            "submit_points_purchase", "activate_protection", "extend_protection",
+            "add_customer_number", "update_customer_number", "archive_customer_number",
+            "create_support_thread", "send_support_message",
+        )
         if (name !in allowed) throw CustomerContractException("عملية Backend غير معرّفة للعميل: $name")
         request("$baseUrl/rest/v1/rpc/$name", "POST", arguments.toString(), authenticatedToken())
     }

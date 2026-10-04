@@ -22,11 +22,15 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aman.customer.data.CustomerScreen
 import com.aman.customer.data.LoadPhase
+import com.aman.customer.data.traceElement
 
 @Composable
 fun AmanCustomerApp(context: Context) {
@@ -57,13 +62,19 @@ fun AmanCustomerApp(context: Context) {
         NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
             tabs.forEach { destination ->
                 NavigationBarItem(selected = state.screen == destination, onClick = { vm.navigate(destination) },
+                    modifier = Modifier.traceElement(when (destination) {
+                        CustomerScreen.ABOUT -> "C01.NAV.ABOUT"; CustomerScreen.SEARCH -> "C01.NAV.SEARCH"; CustomerScreen.HOME -> "C01.NAV.HOME"
+                        CustomerScreen.REPORTS -> "C01.NAV.REPORTS"; else -> "C01.NAV.ACCOUNT"
+                    }),
                     icon = { Text(when (destination) { CustomerScreen.ABOUT -> "أ"; CustomerScreen.SEARCH -> "⌕"; CustomerScreen.HOME -> "⌂"; CustomerScreen.REPORTS -> "▤"; else -> "◉" }) },
                     label = { Text(destination.title, style = MaterialTheme.typography.labelSmall) })
             }
         }
     }) { insets ->
         Column(Modifier.fillMaxSize().padding(insets)) {
-            BrandHeader(state.screen.title)
+            val unreadCount = state.data?.related?.get("unread")?.length() ?: 0
+            BrandHeader(state.screen.title, unreadCount.takeIf { state.screen == CustomerScreen.HOME },
+                onNotifications = if (state.screen == CustomerScreen.HOME) ({ vm.navigate(CustomerScreen.NOTIFICATIONS) }) else null)
             if (state.stale) NoticeBanner("تعرض بيانات قديمة أو جزئية · آخر تحديث ${state.data?.loadedAt?.takeIf { it > 0L }?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it)) } ?: "غير معروف"}", warning = true)
             if (state.phase == LoadPhase.LOADING && state.data == null) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -77,13 +88,17 @@ fun AmanCustomerApp(context: Context) {
 }
 
 @Composable
-private fun BrandHeader(title: String) {
+private fun BrandHeader(title: String, unreadCount: Int?, onNotifications: (() -> Unit)?) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text("AMAN  |  أمان", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+            Text("AMAN  |  أمان", Modifier.traceElement("C01.HEADER.LOGO"), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
             Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
-        Text("◆", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium)
+        if (unreadCount != null && onNotifications != null) {
+            IconButton(onClick = onNotifications, modifier = Modifier.traceElement("C01.HEADER.NOTIFICATIONS")) {
+                Icon(Icons.Outlined.Notifications, contentDescription = if (unreadCount > 0) "الإشعارات، $unreadCount غير مقروء" else "الإشعارات")
+            }
+        } else Text("◆", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium)
     }
 }
 
