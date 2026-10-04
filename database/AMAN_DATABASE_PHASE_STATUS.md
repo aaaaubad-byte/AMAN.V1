@@ -84,6 +84,6 @@ Created a clean-from-zero artifact:
 
 ## Git
 
-- **SQL artifact commit:** to be recorded after the first phase commit.
+- **SQL artifact commit:** `6e2eaad7e0b29cea72a0a398f73fd4c04533d033`
 - **Status finalization commit:** to be recorded after the status hash is written.
-- **Push result:** pending until commit/push completes; no success is claimed in advance.
+- **Push result:** pending until the final status commit is pushed; no success is claimed in advance.
