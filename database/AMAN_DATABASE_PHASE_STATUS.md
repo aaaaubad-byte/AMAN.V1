@@ -86,4 +86,4 @@ Created a clean-from-zero artifact:
 
 - **SQL artifact commit:** `6e2eaad7e0b29cea72a0a398f73fd4c04533d033`
 - **Status finalization commit:** `cdd9640398578b769db50feecf7edaf236ecd496`
-- **Push result:** the artifact and status commits were pushed after review; the final metadata commit is recorded below.
+- **Push result:** successful; remote `main` points to `3e40f1616f77b23c5decbbabf5dec18bcb0b2faa` after review.
