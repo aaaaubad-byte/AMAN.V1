@@ -37,8 +37,8 @@ SUPABASE_ANON_KEY=<public-anon-key>
 - Mutations المعروفة: `submit_points_purchase_request`, `activate_protection`, `extend_protection`; وRPC `mark_notification_read` لتعيين `system_notifications.is_read/read_at`.
 - جداول `payment_tasks` وخطة التشغيل الداخلية لا تُطلب أو تُعرض في تطبيق العميل.
 
-راجع `IMPLEMENTATION_BLOCKERS.md` و`../MANUS/PHASE_3_STATE.md` للقيود الواقعية في مخطط SQL الحالي. طلب شراء النقاط يمكن حفظه كـintent مشفر لكل مستخدم ثم إرساله عند عودة الاتصال؛ تميزه الواجهة عن طلب وصل Backend. التفعيل والتمديد وبقية العمليات الحساسة لا تنفذ أو تعد بالنجاح Offline.
+المرجع الحالي للعقود هو `../V7.md` و`../database/AMAN_V7_DATABASE.sql` فقط؛ لا يستخدم Customer ملفات SQL التاريخية كـfallback. طلب شراء النقاط يمكن حفظه كـintent مشفر لكل مستخدم ثم إرساله عند عودة الاتصال؛ تميزه الواجهة عن طلب وصل Backend. التفعيل والتمديد وبقية العمليات الحساسة لا تنفذ أو تعد بالنجاح Offline.
 
 ## حالة Customer Phase
 
-راجع `AMAN_CUSTOMER_PHASE_STATUS.md` لمصفوفة C01–C15، مسار كل Action من UI إلى RPC، وقيود `SQL_REVISION_REQUIRED` و`DATABASE_CONTRACT_GAP`. يسجل التطبيق إجراءات وأخطاء غير حساسة محليًا في `customer-action-errors.jsonl` لتجنب الصمت التشغيلي، ولا يسجل كلمات مرور أو رموز جلسات أو مراجع دفع.
+راجع `AMAN_CUSTOMER_PHASE_STATUS.md` لمصفوفة C01–C15، مسار كل Action من UI إلى RPC، وقيود التحقق الواقعية. يسجل التطبيق إجراءات وأخطاء غير حساسة محليًا لتجنب الصمت التشغيلي، ولا يسجل كلمات مرور أو رموز جلسات أو مراجع دفع.

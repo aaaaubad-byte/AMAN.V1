@@ -460,7 +460,35 @@ begin
  perform public.write_audit('resubmit_points_purchase','points_purchase',v.id,null,to_jsonb(v));
  return v;
 end $$;
-create or replace function public._rebuild_task_plan_internal(p_protection_id uuid,p_reason text default null) returns public.protection_task_plans language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.protection_task_plans; p public.protections; s public.task_settings; d timestamptz; n int:=0; begin select * into p from public.protections where id=p_protection_id for update; if not found then raise exception 'protection_not_found'; end if; select * into s from public.task_settings where provider_id=p.provider_id; if not found then raise exception 'task_settings_not_found'; end if; insert into public.protection_task_plans(protection_id,anchor_date,interval_days,planned_until) values(p.id,p.started_at,s.interval_days,p.expires_at) on conflict(protection_id) do update set interval_days=excluded.interval_days,planned_until=excluded.planned_until,version=public.protection_task_plans.version+1,last_rebuilt_at=now() returning * into v; update public.payment_tasks set status='cancelled',cancelled_at=now(),cancellation_reason=coalesce(p_reason,'task_plan_rebuilt') where plan_id=v.id and status='open' and due_at>=now(); select coalesce(max(sequence_no),0) into n from public.payment_tasks where plan_id=v.id; d:=v.anchor_date; while d<p.expires_at loop if d>=now() and s.auto_create then n:=n+1; insert into public.payment_tasks(task_code,plan_id,protection_id,phone_number_id,subscriber_id,provider_id,due_at,original_due_at,amount_snapshot,currency_snapshot,sequence_no) values(public.next_public_code('payment_tasks','task_code','T'),v.id,p.id,(select cn.phone_number_id from public.activated_numbers an join public.customer_numbers cn on cn.id=an.customer_number_id where an.id=p.activated_number_id),p.subscriber_id,p.provider_id,d,d,s.task_amount,s.currency,n) on conflict do nothing; end if; d:=d+make_interval(days=>s.interval_days); end loop; update public.protection_task_plans set planned_task_count=n where id=v.id returning * into v; return v; end $$;
+create or replace function public._rebuild_task_plan_internal(p_protection_id uuid,p_reason text default null,p_preserve_task_id uuid default null) returns public.protection_task_plans language plpgsql security definer set search_path=public,pg_temp as $$
+declare
+ v public.protection_task_plans; p public.protections; s public.task_settings; d timestamptz; n int:=0; preserve_due timestamptz;
+begin
+ select * into p from public.protections where id=p_protection_id for update;
+ if not found then raise exception 'protection_not_found'; end if;
+ select * into s from public.task_settings where provider_id=p.provider_id;
+ if not found then raise exception 'task_settings_not_found'; end if;
+ if p_preserve_task_id is not null then select due_at into preserve_due from public.payment_tasks where id=p_preserve_task_id and status='open'; end if;
+ insert into public.protection_task_plans(protection_id,anchor_date,interval_days,planned_until)
+ values(p.id,p.started_at,s.interval_days,p.expires_at)
+ on conflict(protection_id) do update set interval_days=excluded.interval_days,planned_until=excluded.planned_until,version=public.protection_task_plans.version+1,last_rebuilt_at=now()
+ returning * into v;
+ update public.payment_tasks set status='cancelled',cancelled_at=now(),cancellation_reason=coalesce(p_reason,'task_plan_rebuilt')
+ where plan_id=v.id and status='open' and due_at>=now() and (p_preserve_task_id is null or id<>p_preserve_task_id);
+ select coalesce(max(sequence_no),0) into n from public.payment_tasks where plan_id=v.id;
+ d:=v.anchor_date;
+ while d<p.expires_at loop
+  if d>=now() and s.auto_create and (preserve_due is null or d<>preserve_due) then
+   n:=n+1;
+   insert into public.payment_tasks(task_code,plan_id,protection_id,phone_number_id,subscriber_id,provider_id,due_at,original_due_at,amount_snapshot,currency_snapshot,sequence_no)
+   values(public.next_public_code('payment_tasks','task_code','T'),v.id,p.id,(select cn.phone_number_id from public.activated_numbers an join public.customer_numbers cn on cn.id=an.customer_number_id where an.id=p.activated_number_id),p.subscriber_id,p.provider_id,d,d,s.task_amount,s.currency,n)
+   on conflict do nothing;
+  end if;
+  d:=d+make_interval(days=>s.interval_days);
+ end loop;
+ update public.protection_task_plans set planned_task_count=n where id=v.id returning * into v;
+ return v;
+end $$;
 
 create or replace function public.rebuild_task_plan(p_protection_id uuid,p_reason text default null) returns public.protection_task_plans language plpgsql security definer set search_path=public,pg_temp as $$
 begin
@@ -604,9 +632,65 @@ begin
  perform public.write_audit('renew_protection','protection',v_protection.id,to_jsonb(v_old),to_jsonb(v_protection),jsonb_build_object('cost',v_cost));
  return jsonb_build_object('protection_id',v_protection.id,'activation_code',v_an.activation_code,'started_at',v_protection.started_at,'expires_at',v_protection.expires_at,'cost',v_cost,'remaining_points',v_balance);
 end $$;
-create or replace function public.reschedule_payment_task(p_task_id uuid,p_new_due_at timestamptz,p_reason text default null) returns public.payment_tasks language plpgsql security definer set search_path=public,pg_temp as $$ begin raise exception 'UNRESOLVED: reschedule history/anchor execution requires runtime verification'; end $$;
-create or replace function public.execute_payment_task(p_task_id uuid,p_external_reference text,p_idempotency_key text) returns public.payment_tasks language plpgsql security definer set search_path=public,pg_temp as $$ begin raise exception 'UNRESOLVED: task financial posting requires configured operational policy verification'; end $$;
-create or replace function public.cancel_payment_task(p_task_id uuid,p_reason text) returns public.payment_tasks language plpgsql security definer set search_path=public,pg_temp as $$ begin raise exception 'UNRESOLVED: cancellation rebuild policy requires runtime verification'; end $$;
+create or replace function public.reschedule_payment_task(p_task_id uuid,p_new_due_at timestamptz,p_reason text default null) returns public.payment_tasks language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.payment_tasks; before_row jsonb; plan public.protection_task_plans;
+begin
+ perform public.require_admin_permission('tasks.reschedule');
+ if p_new_due_at is null or p_new_due_at<=clock_timestamp() then raise exception 'invalid_new_due_at'; end if;
+ select * into v from public.payment_tasks where id=p_task_id for update;
+ if not found then raise exception 'task_not_found'; end if;
+ if v.status<>'open' then raise exception 'task_not_open'; end if;
+ before_row:=to_jsonb(v);
+ update public.payment_tasks set due_at=p_new_due_at,rescheduled_from=v.due_at,rescheduled_at=clock_timestamp(),rescheduled_by=auth.uid(),reschedule_reason=nullif(trim(p_reason),'') where id=v.id returning * into v;
+ update public.protection_task_plans set anchor_date=p_new_due_at,last_rebuilt_at=clock_timestamp() where id=v.plan_id returning * into plan;
+ perform public._rebuild_task_plan_internal(v.protection_id,coalesce(nullif(trim(p_reason),''),'task_rescheduled'),v.id);
+ select * into v from public.payment_tasks where id=p_task_id;
+ perform public.write_audit('reschedule_payment_task','payment_task',v.id,before_row,to_jsonb(v),jsonb_build_object('plan_id',v.plan_id,'new_due_at',v.due_at));
+ return v;
+end $$;
+create or replace function public.execute_payment_task(p_task_id uuid,p_external_reference text,p_idempotency_key text) returns public.payment_tasks language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.payment_tasks; before_row jsonb; v_completed_at timestamptz:=clock_timestamp(); balance public.aman_financial_balance%rowtype;
+begin
+ perform public.require_admin_permission('tasks.execute');
+ if nullif(trim(p_idempotency_key),'') is null then raise exception 'idempotency_key_required'; end if;
+ if nullif(trim(p_external_reference),'') is null then raise exception 'external_reference_required'; end if;
+ select * into v from public.payment_tasks where id=p_task_id for update;
+ if not found then raise exception 'task_not_found'; end if;
+ if v.idempotency_key is not null then
+  if v.idempotency_key<>trim(p_idempotency_key) then raise exception 'idempotency_key_conflict'; end if;
+  return v;
+ end if;
+ if v.status<>'open' then raise exception 'task_not_open'; end if;
+ before_row:=to_jsonb(v);
+ if v.amount_snapshot>0 then
+  select * into balance from public.aman_financial_balance where currency=v.currency_snapshot for update;
+  if not found or balance.balance_amount<v.amount_snapshot then raise exception 'insufficient_financial_balance'; end if;
+  update public.aman_financial_balance set balance_amount=balance_amount-v.amount_snapshot,updated_at=v_completed_at where id=balance.id;
+  insert into public.financial_ledger(entry_type,direction,amount,currency,reference_type,reference_id,description,metadata,created_by)
+  values('task_payment','outflow',v.amount_snapshot,v.currency_snapshot,'payment_task',v.id,'تنفيذ مهمة سداد',jsonb_build_object('external_reference',trim(p_external_reference),'idempotency_key',trim(p_idempotency_key)),auth.uid());
+ end if;
+ update public.payment_tasks set status='completed',completed_at=v_completed_at,completed_by=auth.uid(),idempotency_key=trim(p_idempotency_key) where id=v.id returning * into v;
+ if v_completed_at<v.due_at then
+  update public.protection_task_plans set anchor_date=v_completed_at,last_rebuilt_at=v_completed_at where id=v.plan_id;
+  perform public._rebuild_task_plan_internal(v.protection_id,'task_executed_early',v.id);
+  select * into v from public.payment_tasks where id=p_task_id;
+ end if;
+ perform public.write_audit('execute_payment_task','payment_task',v.id,before_row,to_jsonb(v),jsonb_build_object('external_reference',trim(p_external_reference),'idempotency_key',trim(p_idempotency_key)));
+ return v;
+end $$;
+create or replace function public.cancel_payment_task(p_task_id uuid,p_reason text) returns public.payment_tasks language plpgsql security definer set search_path=public,pg_temp as $$
+declare v public.payment_tasks; before_row jsonb;
+begin
+ perform public.require_admin_permission('tasks.cancel');
+ if nullif(trim(p_reason),'') is null then raise exception 'cancellation_reason_required'; end if;
+ select * into v from public.payment_tasks where id=p_task_id for update;
+ if not found then raise exception 'task_not_found'; end if;
+ if v.status<>'open' then raise exception 'task_not_open'; end if;
+ before_row:=to_jsonb(v);
+ update public.payment_tasks set status='cancelled',cancelled_at=clock_timestamp(),cancelled_by=auth.uid(),cancellation_reason=trim(p_reason) where id=v.id returning * into v;
+ perform public.write_audit('cancel_payment_task','payment_task',v.id,before_row,to_jsonb(v));
+ return v;
+end $$;
 create or replace function public.mark_notification_read(p_notification_id uuid) returns public.system_notifications language plpgsql security definer set search_path=public,pg_temp as $$ declare v public.system_notifications; begin update public.system_notifications set is_read=true,read_at=coalesce(read_at,now()) where id=p_notification_id and user_id=auth.uid() returning * into v; if not found then raise exception 'notification_not_found'; end if; return v; end $$;
 create or replace function public.get_customer_task_summaries() returns jsonb language plpgsql stable security definer set search_path=public,pg_temp as $$
 declare v_result jsonb;
@@ -722,6 +806,9 @@ grant execute on function public.reject_points_purchase(uuid,text,text) to authe
 grant execute on function public.cancel_points_purchase(uuid) to authenticated;
 grant execute on function public.resubmit_points_purchase(uuid,uuid,uuid,text) to authenticated;
 grant execute on function public.rebuild_task_plan(uuid,text) to authenticated;
+grant execute on function public.reschedule_payment_task(uuid,timestamptz,text) to authenticated;
+grant execute on function public.execute_payment_task(uuid,text,text) to authenticated;
+grant execute on function public.cancel_payment_task(uuid,text) to authenticated;
 grant execute on function public.activate_protection(uuid,integer,text) to authenticated;
 grant execute on function public.extend_protection(uuid,integer,text) to authenticated;
 grant execute on function public.renew_protection(uuid,integer,boolean,text) to authenticated;

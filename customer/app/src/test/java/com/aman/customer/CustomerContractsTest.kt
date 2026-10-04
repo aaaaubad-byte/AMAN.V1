@@ -59,6 +59,7 @@ class CustomerContractsTest {
         assertNotNull(CustomerUiTraceability.elements.firstOrNull { it.elementId == "C06.ACTION.ADD" })
         assertNotNull(CustomerUiTraceability.elements.firstOrNull { it.elementId == "C10.ACTION.SEND" })
         assertNotNull(CustomerUiTraceability.elements.firstOrNull { it.elementId == "C12.ACTION.EXPORT" })
+        assertNotNull(CustomerUiTraceability.elements.firstOrNull { it.elementId == "C02.TASK.SUMMARY" })
     }
     @Test fun reportFiltersRealRowsByCategoryAndInclusiveDateRange() {
         val ledger = JSONArray()

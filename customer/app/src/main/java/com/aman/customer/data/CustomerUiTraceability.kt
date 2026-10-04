@@ -53,6 +53,7 @@ object CustomerUiTraceability {
         e("C01.NAV.REPORTS", "bottom navigation", "التقارير", "route state", "navigate to C12"),
         e("C01.NAV.ACCOUNT", "bottom navigation", "الحساب", "route state", "navigate to C13"),
         e("C02.LIST", "list", "الأرقام المفعلة", "protections owned by auth.uid()", "select protection details"),
+        e("C02.TASK.SUMMARY", "status card", "ملخص المهام القادمة", "get_customer_task_summaries", "display customer-safe next due dates; never expose task financial details", backend = "get_customer_task_summaries()", databaseEffect = "read-only customer-safe task summary", permission = "authenticated customer; server filters by auth.uid()"),
         e("C02.ACTION.COPY", "button", "نسخ الرقم", "phone_numbers.phone_e164", "copy selected phone"),
         e("C03.LIST", "list", "الأرقام غير المفعلة", "customer_numbers owned by auth.uid()", "select number details"),
         e("C03.ACTION.COPY", "button", "نسخ الرقم", "phone_numbers.phone_e164", "copy selected phone"),

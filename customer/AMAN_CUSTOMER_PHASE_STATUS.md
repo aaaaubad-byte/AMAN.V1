@@ -1,55 +1,67 @@
 # AMAN Customer Phase Status
 
 **التاريخ:** 2026-10-05
-**النطاق:** Customer (`customer/`) ومراجعة/تحديث العقد الكنسي الجديد `database/AMAN_V7_DATABASE.sql` بعد إذن المستخدم. لم يبدأ تنفيذ Admin، ولم تُستخدم ملفات SQL التاريخية كـfallback.
+**المستودع:** `aaaaubad-byte/AMAN.V1`
+**نسخة العمل المعزولة:** `/home/ubuntu/AMAN.V1-isolated/repo`
+**الفرع:** `main`
+**نطاق هذه الجولة:** Customer وعقود SQL الكنسي اللازمة لمسارات الحماية وخطة المهام؛ لم يبدأ تنفيذ Admin.
 
-## النتيجة التنفيذية
+## الحكم التنفيذي
 
-أُجريت إصلاحات متصلة من Compose إلى Repository وSupabase Auth/PostgREST/RPC/SQL. **هذه المراجعة لا تدّعي اكتمال Customer Phase نهائيًا**: لم يتوفر Android SDK لاختبار بناء Kotlin، ولم يُنفذ SQL على Supabase/PostgreSQL فعلي، وما زالت عقود محرك المهام والتقييم الحي وعمليات قبول كاملة غير متحققة. لم يُعرض نجاح عملية كتابة قبل استجابة الخادم.
+**الحالة: PARTIAL / NOT ACCEPTED AS FULL V7 COMPLETION.**
 
-## التغييرات المنفذة
+تمت مراجعة Customer داخل نسخة Git معزولة عند commit `be930195ba21c58207c79449da741d85187b3b93`، وأُصلحت فجوة تتبع ثابتة (`C02.TASK.SUMMARY`) وأزيل استيراد Compose غير مستخدم ومراجع README التاريخية غير الصالحة. لا توجد استدعاءات RPC للعميل بلا تعريف مقابل في `database/AMAN_V7_DATABASE.sql`، ولا توجد معرفات `traceElement` مستخدمة بلا سجل.
 
-- تنقل رجوعي فعلي مع زر Back للنظام، تمييز التنقل الجذري للتبويبات، وأوامر تحديث للشاشات الفرعية.
-- فصل حالات التحميل/offline/empty/error والبيانات القديمة جزئيًا، وإرجاع المستخدم للدخول عند اكتشاف انتهاء/رفض JWT.
-- سجل مهام محدود للعميل لا يعرض المبالغ أو تفاصيل التشغيل الحساسة.
-- تفعيل/تمديد/تجديد حماية ذري في SQL مع قفل الرصيد، تكلفة خادمية، ledger/operations، idempotency، إشعار، audit، وإنشاء/إعادة بناء خطة المهام؛ بدء حماية جديدة يعيد استعمال كيان `activated_numbers` غير النشط وينشئ X عند أول تفعيل.
-- تحديث/أرشفة علاقة الرقم عبر RPCs ملكية ذات تحقق من البادئات والتكرار والهوية التاريخية.
-- إنشاء مرشحي التفعيل غير النشط عند إضافة الرقم أو اعتماد اشتراك العميل، مع سياسات RLS وقراءة كتالوج provider/tariff للعملاء.
-- مسارات شراء النقاط تميز idempotency عن O code، وتدعم عرض pending وإلغاء الطلب المعلق وإعادة الطلب المرفوض مع الاحتفاظ برقم O. اعتماد الطلب ينفذ تحديث الرصيد والدفاتر والعملية والإشعار في المعاملة.
-- إرسال إشعار الإدارة ينشئ إشعارًا موجهًا للمستخدم عبر `system_notifications` بالإضافة إلى سجل الإرسال.
-- تحديث ملف العميل عبر RPC يقيّد التعديل بـ`auth.uid()` ويسجل audit؛ تحديث كلمة المرور يمر مباشرة إلى Supabase Auth ولا يكتبها في قاعدة AMAN.
-- إزالة AlertDialog من تفاصيل الصف والتأكيدات المشتركة لصالح واجهات inline، وإضافة سياق تنقل لنتائج البحث.
-- مراجعة سجل عناصر UI لتحديث إجراءات C04/C06/C07/C08/C13.
-- ترك ملفات Admin وSQL التاريخية دون تعديل.
+لا يصح إعلان اكتمال Customer بالكامل لأن القبول التشغيلي الحي لـSupabase/PostgreSQL وRLS والمعاملات والتدفقات البصرية لم يُثبت، كما أن V7/ARP يطلب تغطية عنصر-بعنصر أوسع من registry الحالي. لا توجد وظيفة وهمية جديدة في هذه الجولة، ولا تم استخدام SQL تاريخي كـfallback. عُدّل SQL الكنسي فقط لإزالة placeholders اللازمة لعقد محرك المهام الذي تعتمد عليه الحماية.
 
-## حالة الشاشات
+## مصفوفة التتبع المختصرة
 
-التغطية البصرية والوظيفية الجزئية في الكود لا تساوي قبولًا نهائيًا. النقاط التي تتطلب مراجعة لاحقة:
+| المجال | UI / الحالة | Repository / RPC | عقد SQL / الصلاحية | التحقق |
+|---|---|---|---|---|
+| C01–C03 | Dashboard، الأرقام، ملخص المهمة، loading/empty/offline | قراءات `profiles`, `point_balances`, `protections`, `customer_numbers`, `get_customer_task_summaries` | قراءات مستخدم مقيدة بـ`auth.uid()` وRLS | PASS ثابتًا؛ runtime NOT VERIFIED |
+| C04–C05 | شراء النقاط، pending/rejected/cancelled/resubmit، العمليات والفلاتر | `submit_points_purchase_request`, `cancel_points_purchase`, `resubmit_points_purchase` | snapshot، idempotency، ledger بعد الاعتماد | PASS ثابتًا جزئيًا؛ runtime/concurrency NOT VERIFIED |
+| C06 | إضافة/تعديل/أرشفة الرقم، E.164، أطول بادئة | `add_customer_number`, `update_customer_number`, `archive_customer_number` | ملكية، prefix، منع تغيير الهوية بعد التفعيل | PASS ثابتًا؛ runtime NOT VERIFIED |
+| C07–C08 | تفعيل/تمديد/تجديد، حساب تقديري، تأكيد، insufficient balance | `activate_protection`, `extend_protection`, `renew_protection` | خصم ذري، idempotency، حماية، ledger/operation/notification/plan | PASS ثابتًا جزئيًا؛ runtime/concurrency NOT VERIFIED |
+| C09–C11 | تنبيهات الإدارة، الدعم، إشعارات النظام، mark-read | `mark_notification_read`, `create_support_thread`, `send_support_message` | ملكية/RLS؛ لا تظهر تفاصيل المهام المالية للعميل | PASS ثابتًا جزئيًا؛ runtime NOT VERIFIED |
+| C12–C15 | تقارير/CSV، الحساب/Auth، البحث، عن AMAN، bottom navigation | PostgREST للمصادر المملوكة وSupabase Auth لتغيير كلمة المرور | لا تُخزن كلمة المرور في AMAN؛ cache للمشاهدة فقط | PASS ثابتًا جزئيًا؛ UI/runtime NOT VERIFIED |
 
-| المجموعة | الحالة بعد هذا التعديل |
-|---|---|
-| C01–C03 | تحسين الرجوع/التحديث وملخص المهام؛ يلزم تحقق عرض وبيانات runtime |
-| C04 | شراء، إلغاء pending، إعادة تقديم rejected؛ يلزم اختبار تنافسي وRLS حي |
-| C05 | بحث/فلاتر وسجل فعلي؛ يلزم مطابقة كل عنصر في V7 واختبار عرض |
-| C06–C08 | إضافة/تعديل/أرشفة الرقم والتفعيل/التمديد/التجديد موصولة بـSQL الجديد؛ من دون تنفيذ حي أو قبول معاملات |
-| C09–C11 | قراءة الإشعارات/الدعم وتغيير حالة القراءة؛ لم تُختبر على Supabase حية |
-| C12–C15 | التقارير والتصدير والملف الشخصي وتغيير كلمة المرور والبحث/المعلومات؛ يلزم اختبار واجهة وتدفق Auth حي |
+## ما تم التحقق منه
 
-## ما بقي غير محسوم/غير متحقق
+- Git clone معزول ونظيف قبل التعديل، والفرع `main` متزامن مع `origin/main` عند نقطة البدء.
+- عدد شاشات Customer في العقد البرمجي: `15` (`C01`–`C15`).
+- كل استدعاءات RPC الصريحة في Customer لها تعريف مقابل في SQL الكنسي: `15/15`.
+- كل معرفات `traceElement(...)` المستخدمة في Customer لها سجل في `CustomerUiTraceability`: لا توجد فجوة بعد الإصلاح.
+- `git diff --check`: ناجح.
+- اختبار القواعد الثابتة: معرفات التتبع فريدة ومقيدة بنطاق الشاشة؛ اختبار C02 الجديد يثبت استمرار وجود ملخص المهام.
+- إزالة مراجع `IMPLEMENTATION_BLOCKERS.md` و`../MANUS/PHASE_3_STATE.md` القديمة من README.
+- استبدال placeholders الخاصة بـ`reschedule_payment_task` و`execute_payment_task` و`cancel_payment_task` بتنفيذ ذري يحفظ التاريخ، يحدّث anchor، يسجل financial ledger عند وجود مبلغ، يمنع التكرار، ويسجل audit.
+- إضافة `p_preserve_task_id` داخليًا لإعادة بناء المستقبل دون إلغاء المهمة المعاد جدولتها، وإضافة grants صريحة لدوال محرك المهام الثلاث.
+- نجح `pglast` في parsing عدد `169` عبارة SQL؛ هذا parsing ساكن ولا يثبت تنفيذ PL/pgSQL أو RLS.
 
-### `UNRESOLVED` في عقد قاعدة البيانات (ليس ضمن مسار عميل مكتمل)
+## الاختبار والبناء
 
-- `reschedule_payment_task`, `execute_payment_task`, و`cancel_payment_task` ما زالت placeholders صريحة في SQL؛ لم تُبتكر سياسة تشغيل/ترحيل مالية.
-- `admin_adjust_points` ما زال يطلب قيمة مالية موثوقة لكل نقطة غير معرفة في V7.
-- لم تُنفذ قاعدة SQL على بيئة PostgreSQL/Supabase، لذلك لا تُدّعى صحة تنفيذ PL/pgSQL أو RLS/runtime أو القفل والتراجع تحت التنافس.
+- **BUILD = NOT VERIFIED**
+  **REASON = Android SDK unavailable in execution environment**
+- تم تشغيل `./gradlew :app:testDebugUnitTest --no-daemon`، لكنه توقف قبل Kotlin compilation برسالة `SDK location not found` لغياب `ANDROID_HOME` و`local.properties sdk.dir`.
+- لم يتم تثبيت Android SDK أو محاولة إصدار APK/AAB، وفق نطاق المرحلة.
+- لم يتوفر PostgreSQL/Supabase مصرح به لتشغيل schema وPL/pgSQL وRLS أو اختبارات T01–T22.
 
-### `NOT VERIFIED`
+## القيود والفجوات المتبقية
 
-- **BUILD = NOT VERIFIED**. أمر `./gradlew :app:testDebugUnitTest --no-daemon` توقف قبل Kotlin compilation لأن `ANDROID_HOME` و`local.properties sdk.dir` غير موجودين: `SDK location not found`.
-- تم فحص صياغة SQL الخارجية بواسطة PostgreSQL parser (`pglast`): نجح تحليل 166 statement. هذا **لا** يثبت صحة أجسام PL/pgSQL وقت التنفيذ أو توافق المخطط مع Supabase.
-- لم يتم اختبار رحلة شراء فعلية أو خصم نقاط أو Auth password update أو تشغيل RPC على حساب حقيقي.
-- راجع/أكمل اختبار كل عنصر في V7، بما فيه حالات إعادة المحاولة والتزامن والرجوع، ثم شغّل T01–T22 على قاعدة اختبار مصرح بها قبل اعتبار المرحلة مقبولة للنشر.
+1. **F-001 / traceability:** registry الحالي يغطي التنفيذ الموجود لكنه لا يثبت تغطية كل عناصر V7 البصرية البالغ عددها 146 عنصرًا؛ يلزم استكمال mapping عنصر-بعنصر وربطه باختبارات قبول.
+2. **Runtime acceptance:** لا يوجد تحقق حي لتدفقات Auth، PostgREST، RPC، RLS، rollback، التنافس، أو استجابة UI بعد mutation؛ كما لم تُنفذ دوال محرك المهام على PostgreSQL فعلي.
+3. **SQL contract gap خارج مسار Customer المباشر:** `admin_adjust_points` ما زال `UNRESOLVED` لأن V7 لا يحدد قيمة مالية موثوقة لكل نقطة؛ لم تُخترع سياسة مالية. دوال محرك المهام الثلاث أصبحت منفذة ثابتًا، لكن تشغيلها الحي غير متحقق.
+4. **Support idempotency:** عقد الدعم الحالي لا يوفر مفتاح idempotency آمنًا لإعادة إرسال الرسالة تلقائيًا؛ التطبيق يمنع إعادة الإرسال التلقائي ويطلب التحقق من الخادم.
 
-## صلاحية التغيير
+## التغييرات في هذه الجولة
 
-كان المرفق الأصلي يمنع تعديل SQL؛ لاحقًا صرّح المستخدم في المحادثة: **«عدل قاعدة البيانات لا مشكلة»**، وبناءً على ذلك تم تعديل **الملف الكنسي الجديد فقط** `database/AMAN_V7_DATABASE.sql`.
+- إضافة `C02.TASK.SUMMARY` إلى `CustomerUiTraceability` مع عقد القراءة والصلاحية والأثر.
+- إضافة assertion للاختبار الثابت الخاص بالعنصر.
+- إزالة استيراد `AlertDialog` غير المستخدم.
+- إزالة مراجع README إلى ملفات تاريخية غير موجودة، وتثبيت V7/SQL الكنسي كمراجع Customer.
+- تحديث هذا التقرير بالحكم والقيود ونتائج التحقق.
+
+## Git
+
+- **العمل غير المدفوع في هذه الجولة:** تعديلات Customer وREADME والتقرير و`database/AMAN_V7_DATABASE.sql` الكنسي فقط.
+- يجب ألا يُوصف هذا commit بأنه اكتمال V7 النهائي ما دامت القيود أعلاه قائمة.
