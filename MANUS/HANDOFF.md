@@ -1,46 +1,51 @@
-# تسليم AMAN — بعد كتابة مصادر STAGE 3
+# تسليم AMAN — checkpoint AMAN-2
 
-## المستودع ونقطة التسليم
+## المستودع والحالة
 
-- Repository: `aaaaubad-byte/AMAN.V1`.
-- Branch: `main`.
-- مصدر العميل موجود تحت `customer/`؛ مستقل عن `admin/`.
-- نقطة الأساس قبل عمل هذه المرحلة كانت `248c431` — `phase 2: add admin contracts and checkpoint`.
-- لم يُسلّم APK ولم يُنشر المنتج. استُخدم assembleDebug للاختبار التقني فقط.
+- Repository: `aaaaubad-byte/AMAN.V1`، branch `main`.
+- التغييرات الجديدة تُحفظ في checkpoint AMAN-2؛ تحقّق من hash التنفيذ الحالي بـ`git log -1 --oneline` بعد push.
+- الأب قبل checkpoint: `8807700` على `main`.
+- **حالة العمل:** كود Admin وعقوده مترجمة/مختبرة محليًا؛ تكامل Supabase الحي وجهاز Android غير مختبرين. لا يوجد ادعاء جاهزية إنتاج.
 
-## حدود التفويض لهذه المرحلة
+## ما اكتمل في AMAN-2
 
-المطلوب قراءة المرجع و`database/` و`MANUS/`، كتابة ملفات عميل Android، وعدم الاتصال بـSupabase حقيقي أو تنفيذ queries/RPC/SQL فعلية. تحقق build محلي فقط. الرفع المطلوب هنا هو **مصدر Android والوثائق إلى المستودع**، لا نشر التطبيق.
+- توصيل شاشة الإدارة A01–A15 بمصادر SQL/RPC، بما في ذلك بحث/فلاتر، تفاصيل مرتبطة، mutations بحسب permission، تقارير وتصدير CSV بعد صلاحية Backend، حالات تحميل/خطأ/خلو وOffline.
+- Supabase Auth: دخول، refresh، إعادة فحص `is_admin`, حساب/permissions من `admin_account_info`, معالجة 401/403/5xx؛ Cache الجلسة واللقطات مشفر، mutations معطلة على Offline.
+- لوحة A01 تستمد الأعداد من `count exact` عبر PostgREST مع RLS، ولا تستخدم أرقامًا mock.
+- **قرار A04:** لا تحرير لرقم الهاتف إطلاقًا ولا RPC تحرير. العرض وتغيير حالة العلاقة فقط حسب العقد الحالي.
+- **قرار A08:** Providers وTelecom Prefixes وProvider Tariffs تُدار عبر RPCs؛ أضيفت migration 004 مصدرية. لا migration منفذة على Supabase.
+- **إشعارات:** تسليم المستخدم في `notifications` (`admin_alert`)، وسجل الحملة في `admin_notifications` الموجود أصلًا في migration 002؛ لم يُنشأ جدول إشعارات إضافي.
+- A07 يسجل مرجع الدفع بعد تنفيذه خارجيًا؛ التطبيق لا ينفذ الدفع.
 
-## نقطة الإنجاز الدقيقة
+## آخر نقطة عمل دقيقة
 
-اكتمل هيكل مستقل `customer/` ويتضمن المشروع Gradle وAndroid Manifest والموارد، واجهات C01–C15، RTL وهوية داكنة، Auth، مستودع وبوابة REST/RPC، cache مشفرًا ومجزأ حسب المستخدم، تحديثًا خلفيًا مشروطًا بالاتصال، حالات Offline/Error/Empty/Stale، وفحوص وحدة.
+- آخر ملف مصدر عُدّل قبل التوثيق: `admin/app/src/main/java/com/aman/admin/data/AdminRepository.kt` (آخر تعديل 2026-10-04 03:50:12+03:00)، بما فيه التحقق من النماذج وفلاتر cache Offline.
+- آخر شاشة عولجت: A01 مؤشرات حقيقية؛ كما صُحح بحث/تحديث القوائم التابعة A02/A05/A08 وA11.
+- آخر عقد Backend: migration `004_admin_provider_catalog_rpcs.sql` لعقود حفظ بادئات الاتصالات والتعرفات الإدارية؛ وGateway يقرأ العدّادات عبر RLS. ملف SQL النهائي مصدره concat migrations 001–004.
 
-عمليات نقاط الشراء/التفعيل/التمديد مقسمة: `submit_points_purchase` يودع طلبًا Pending دون زيادة رصيد؛ `activate_protection` و`extend_protection` وحدهما يطلبان خصم النقاط والحماية؛ التطبيق لا يعرض المهام التشغيلية. طلب الشراء وحده يمكن أن يحفظ intent مشفرًا عند Offline ويعيد إرساله بالمفتاح نفسه؛ يظل غير مسجل بالخادم ولا يضيف نقاطًا حتى ردّه. التفعيل والتمديد لا ينفذان Offline.
+## فحوص checkpoint
 
-## تحقق محلي
+- `cd admin && ./gradlew testDebugUnitTest --no-daemon --console=plain`: BUILD SUCCESSFUL بعد آخر تعديلات المصدر، 7 اختبارات، 0 فشل.
+- `cmp` على concat migrations 001–004 مقابل `database/AMAN_DATABASE_FINAL.sql`: ناجح.
+- فشل فحص `pglast` لعدم تثبيت الحزمة في البيئة؛ لا نزعم parser validation للمigration 004.
+- لم يجرِ الاتصال بـSupabase، ولا تشغيل SQL أو queries/RPC حية، ولا اختبار على محاكي/جهاز. لا APK مطلوب أو مسلم.
 
-```bash
-cd customer && ./gradlew clean testDebugUnitTest assembleDebug --no-daemon --console=plain
-```
+## ما لم يكتمل
 
-النتيجة: BUILD SUCCESSFUL، 4 اختبارات/صفر إخفاق، assembleDebug للتحقق فقط. لا جهاز أو قاعدة Supabase حية جرى اختبارها، ولا URL/anon key مهيأ.
+1. لا قيم `SUPABASE_URL` و`SUPABASE_ANON_KEY` للمشروع المقصود.
+2. migration 004 (وكذلك تحقق حال كل migrations السابقة) لم تُطبق على قاعدة حية.
+3. RLS، permission matrices، النتائج الفعلية لكل RPC، التدقيق والمعاملات لم تُختبر في بيئة Supabase.
+4. لا اختبار UI على جهاز/محاكي ولا مقارنة بصرية دقيقة لغياب لقطات مرجعية.
+5. التنفيذ الخارجي للدفع غير مدمج؛ المسار الحالي يتطلب تنفيذًا بشريًا رسميًا ثم إدخال المرجع.
 
-## قيود تستلزم المرحلة الرابعة
+## الخطوة التالية حرفيًا
 
-التفاصيل في `customer/IMPLEMENTATION_BLOCKERS.md` و`MANUS/PHASE_3_STATE.md`. أهمها: لا كتابة أرقام C06، لا إرسال دعم C10، لا ضمان Profile/Subscriber عند signup، اعتماد قراءة التعرفة على migration 002 غير متحقق، RLS لا يكشف حماية العملاء الآخرين، وRPC التفعيل/التمديد غير idempotent على مستوى المعاملة. لا تحاول تخمين عقود أو ترقيع SQL ضمن هذه الحالة.
+1. `git log -1 --oneline` ثم `git status --short` للتأكد من checkpoint المنشور.
+2. لا تعدّل المصدر ولا تنفذ SQL حي قبل تهيئة مشروع Supabase المقصود وتوفر تفويض صريح لاختبار/تطبيق migrations.
+3. عند التصريح: اختبر migrations/RLS/roles/RPCs على البيئة المخولة، وابدأ بـmigration 004 ومطابقة schema الفعلية؛ لا تستخدم service-role في التطبيق.
+4. بعد اجتياز Backend، اختبر Auth والوظائف A01–A15 على جهاز/محاكي، وسجل نتائج الفشل/النجاح هنا وفي `MANUS/PHASE_2_STATE.md`.
 
-## الاستئناف دون إعادة العمل
+## سجل سابق
 
-1. اقرأ `MANUS/PROJECT_STATE.md` و`MANUS/PHASE_3_STATE.md` و`customer/IMPLEMENTATION_BLOCKERS.md`.
-2. ابدأ مرحلة الإصلاح اللاحقة بحسم العقود المصدرية والاختبارات المخولة، لا بإعادة إنشاء `customer/`.
-3. عالج عوائق `admin/` فقط في مسار المرحلة الرابعة المطلوب؛ عمل STAGE 3 لم يغير `admin/`.
-4. قبل AMAN-1 لم يحدث اتصال حي، تنفيذ SQL، استعلامات/RPC حقيقية أو تغيير ملفات `database`.
-
-## AMAN-1 — Backend/Database source repair checkpoint
-
-- Added `database/migrations/003_aman1_backend_repairs.sql` and generated `database/AMAN_DATABASE_FINAL.sql` from migrations 001–003.
-- Implemented source-level repairs for profile provisioning, subscriber creation after approval, secure purchase/number/support RPCs, provider resolution, activation authorization, pre-mutation idempotency, expiration/renewal, task planning settings, canonical admin role `admin`, audit fields, and financial ledger vocabulary.
-- Product decisions recorded in `database/README.md`: one `notifications` table, canonical audit fields, archive semantics for numbers, RPC-only support writes, and customer report export in scope.
-- Static parser validation passed for all migrations and the final SQL artifact. No SQL was executed and no Supabase project was connected.
-- Remaining gate: apply only in a separately authorized clean database, then run schema/RLS/RPC/concurrency/idempotency/end-to-end tests and update this handoff with live results. Do not claim live readiness from the static pass.
+- STAGE 3 (العميل): مصدره في `customer/` مستقل؛ لا تعد إنشاءه، ولم يلمسه AMAN-2.
+- AMAN-1: `database/migrations/003_aman1_backend_repairs.sql` و`database/AMAN_DATABASE_FINAL.sql` أصلحا عقودًا مصدرية؛ لا يعني ذلك تطبيقًا حيًا.

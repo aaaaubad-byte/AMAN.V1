@@ -32,14 +32,18 @@ class AdminRefreshWorker(context: Context, params: WorkerParameters) : Coroutine
                 AdminSection.PROVIDERS,
                 AdminSection.PACKAGES,
                 AdminSection.PAYMENT_METHODS,
+                AdminSection.TASK_SETTINGS,
                 AdminSection.NOTIFICATIONS,
                 AdminSection.REPORTS,
                 AdminSection.ACCOUNT,
             ).forEach { section -> runCatching { repository.load(section) } }
             Result.success()
-        } catch (_: BackendResponseException) {
-            repository.clearLocalSession()
-            Result.success()
+        } catch (error: BackendResponseException) {
+            when {
+                error.statusCode == 401 -> { repository.clearLocalSession(); Result.success() }
+                error.statusCode >= 500 -> Result.retry()
+                else -> Result.success()
+            }
         } catch (_: Exception) {
             Result.retry()
         }

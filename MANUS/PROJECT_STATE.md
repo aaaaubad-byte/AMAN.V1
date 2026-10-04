@@ -2,42 +2,33 @@
 
 ## المستودع والتنفيذ
 
-- المستودع: `aaaaubad-byte/AMAN.V1`.
-- الفرع: `main`.
-- نقطة الأساس قبل هذا التسليم: `248c431` — `phase 2: add admin contracts and checkpoint`.
-- مرحلة العمل الحالية: **AMAN-1 — BACKEND/DATABASE SOURCE REPAIR**، مع إبقاء مصادر Android مستقلة وعدم تعديل واجهاتها في هذه المرحلة.
-- مصدر المرحلة الثالثة موثّق في GitHub على `main` عبر commit `8807700`; لا APK نشر أو إصدار منتج.
+- المستودع: `aaaaubad-byte/AMAN.V1`، الفرع: `main`.
+- HEAD الأب قبل checkpoint AMAN-2: `8807700` — مصادر STAGE 3/AMAN-1.
+- المرحلة الحالية: **AMAN-2 — إكمال مصدر تطبيق Admin وربط العقود**. تغييراتها تحفظ الآن في commit/push مستقل بعد `git diff --check`.
+- لا تغييرات على `customer/` أو `MANUS/PHASE_1_STATE.md`.
 
 ## حالة المراحل
 
-- STAGE 1: migration source محفوظ في `database/`؛ لم يثبت تطبيقه/اختباره على Supabase المقصود، لذلك ليس مكتملًا حيًا.
-- STAGE 2: تطبيق Admin Android موجود ومبني جزئيًا؛ **غير مكتمل وظيفيًا** وفق `admin/IMPLEMENTATION_BLOCKERS.md` و`MANUS/PHASE_2_STATE.md`. المرحلة الثالثة لم تصلح شيفرة الإدارة.
-- STAGE 3: ملفات مشروع العميل C01–C15، التنقل والطبقات والعقود المتاحة، وثائق العوائق والاختبارات أُنشئت تحت `customer/`. الكتابات التي لا يدعمها SQL موضحة ومعطلة بوضوح. جاهزية backend الحية غير مثبتة.
-- STAGE 4 (لاحقًا): إصلاح/استكمال عقود SQL ومسارات الإدارة والعميل والتحقق المتكامل ضمن تفويضها؛ لا تعِد إنشاء مجلد العميل من الصفر.
-- AMAN-1: migration إصلاحية `database/migrations/003_aman1_backend_repairs.sql` وملف SQL النهائي `database/AMAN_DATABASE_FINAL.sql` أُنشئا وفُحصا static؛ لا يعني ذلك تطبيقًا حيًا أو جاهزية إنتاج.
+- STAGE 1: migrations مصدرية؛ تطبيقها والتحقق من Supabase المقصودة غير مثبتين.
+- STAGE 2 / AMAN-2: شاشات Admin A01–A15 وعقودها مربوطة في المصدر. نتيجة اختبارات الوحدة بعد آخر تعديل ناجحة؛ القبول الحي واختبار جهاز/محاكي ما زالا مفتوحين. راجع `MANUS/PHASE_2_STATE.md`.
+- STAGE 3: مصادر تطبيق العميل محفوظة تحت `customer/` من checkpoint سابق؛ AMAN-2 لم يعدلها.
+- AMAN-1: إصلاحات Backend السابقة في migration 003 وSQL النهائي؛ مصدرية فقط، لا تطبيق حي.
+- AMAN-2 أضاف migration `004_admin_provider_catalog_rpcs.sql` لعقود A08. لم تُنفذ أو تُطبق.
 
-## ما تم التحقق منه
+## ما تم التحقق منه الآن
 
-- `cd customer && ./gradlew clean testDebugUnitTest assembleDebug --no-daemon --console=plain` — **BUILD SUCCESSFUL**، 4 اختبارات ناجحة.
-- الاختبارات تغطي كتالوج الشاشات واختيار أطول بادئة وتصفية البادئات المعطلة وحساب تكلفة المدخل الإيجابي؛ لا تغطي UI أو تكاملًا حيًا.
-- `assembleDebug` للبناء والتحقق فقط. لم يُسلّم أو يُنشر APK، ولم يُختبر على جهاز/محاكي.
-- لا اتصال Supabase ولا queries/RPC على قاعدة حقيقية، ولا تنفيذ SQL؛ أضيفت إصلاحات AMAN-1 إلى مصادر `database/` فقط.
-- طلب الشراء Offline قد يحفظ intent مشفرًا ويرسله لاحقًا بمفتاح ثابت؛ يظل محليًا ولا يحتسب نقاطًا حتى يرد Backend. التفعيل والتمديد لا يعملان Offline.
-- لا مفاتيح مشروع Supabase مهيأة. لا تضمين `service_role`.
-- فحص parser لـPostgreSQL نجح للمigrations 001–003 وملف SQL النهائي؛ لم تُنفذ SQL ولم يُتصل بقاعدة Supabase.
+- `cd admin && ./gradlew testDebugUnitTest --no-daemon --console=plain` — **BUILD SUCCESSFUL**، 7 اختبارات، 0 فشل/أخطاء. يترجم المصدر ويشغل الوحدة؛ لم يُجرِ تصدير/تسليم APK في هذا التحقق.
+- `database/AMAN_DATABASE_FINAL.sql` يطابق concatenation للمigrations 001–004 حرفيًا.
+- لم يتوفر `pglast` في checkpoint الأخير؛ لا نزعم نجاح تحليل parser للمigration 004 في هذه الجولة.
+- لا URL/anon key للمشروع، لا اتصال Supabase، لا queries/RPCs حية ولا تنفيذ SQL. لم يُختبر على جهاز/محاكي.
 
 ## الحدود المعروفة
 
-راجع `customer/IMPLEMENTATION_BLOCKERS.md`:
-
-- C06: لا GRANT كتابة ولا RPC للعميل على علاقات الأرقام؛ زر الحفظ معطل.
-- C10: قراءة الدعم موجودة؛ لا عقد كتابة/إرسال؛ الزر معطل.
-- إنشاء حساب Auth لا يضمن إنشاء profile/subscriber في SQL الظاهر.
-- قراءة provider_tariffs للعميل تعتمد على migration إضافي غير متحقق.
-- RLS لا يكشف حماية رقم لمستخدم آخر؛ تحقق eligibility النهائي بالـRPC.
-- RPC التفعيل/التمديد لا تنفذ idempotency check قبل الخصم؛ النتيجة الملتبسة موضحة للمستخدم ولا يُعاد إرسالها تلقائيًا.
-- لقطات الصور المرجعية غير موجودة للمقارنة المرئية الدقيقة.
+- migration 004 لم تُطبق؛ أي اختلاف live schema/RLS يحتاج تحققًا في البيئة المخولة.
+- دفع A07 خارجي يدوي؛ التطبيق يسجل العملية/مرجعها بعد إتمامها خارج التطبيق.
+- لا صور مرجعية كافية لمقارنة الواجهة بكسليًا.
+- لا تستخدم `service_role` ولا تدّعِ اكتمالًا إنتاجيًا بناءً على ترجمة واختبارات الوحدة.
 
 ## الخطوة التالية
 
-المرحلة الرابعة اللاحقة: اعتماد العقود الناقصة والتحقق منها في قاعدة مخولة، ثم استكمال/إصلاح عميل وإدارة وفق المصدر المعتمد. لا تضف mock data ولا تستخدم service-role. يحتفظ `MANUS/HANDOFF.md` بنقطة الاستئناف الدقيقة.
+افتح `MANUS/HANDOFF.md` و`MANUS/PHASE_2_STATE.md`، تحقق من HEAD وحالة Git، ثم انتظر تهيئة المشروع المقصود وتفويضًا واضحًا لاختبار/تطبيق SQL حي. بعد ذلك تحقق من migrations/RLS/RPC والأدوار، واختبر تدفقات Admin على جهاز/محاكي. لا تصدر APK ما لم يُطلب.

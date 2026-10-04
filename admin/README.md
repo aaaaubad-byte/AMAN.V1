@@ -1,40 +1,33 @@
-# AMAN Admin — Native Android
+# AMAN Admin — تطبيق Android أصلي
 
-This folder contains a standalone Kotlin/Jetpack Compose Android application. It is not a web app or a browser prototype.
+مجلد `admin/` مشروع مستقل بـ Kotlin وJetpack Compose، بواجهة عربية RTL، ومخازن محلية مشفرة. ليس تطبيق ويب.
 
-## Build
+## تحقق المصدر والاختبارات
 
-Requires JDK 17 or later and Android SDK Platform 35 / Build Tools 35.0.0.
+المتطلبات: JDK 17+ وAndroid SDK Platform 35 / Build Tools 35.0.0.
 
 ```bash
 cd admin
-./gradlew testDebugUnitTest assembleDebug
+./gradlew testDebugUnitTest --no-daemon --console=plain
 ```
 
-The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+الأمر أعلاه يترجم المصدر ويشغل اختبارات الوحدة دون بناء أو تسليم APK. آخر تحقق AMAN-2: BUILD SUCCESSFUL؛ 7 اختبارات، بلا فشل.
 
-## Runtime configuration
+## الإعداد وقت التشغيل
 
-The build accepts `SUPABASE_URL` and `SUPABASE_ANON_KEY` through Gradle properties or environment variables. Example:
+يقبل Gradle `SUPABASE_URL` و`SUPABASE_ANON_KEY` من خصائص Gradle أو متغيرات البيئة. تبقى القيم فارغة افتراضيًا، وتظهر شاشة الدخول رسالة إعداد عند غيابها. لا تضع `service_role` أو كلمة مرور أو مفتاحًا خاصًا داخل التطبيق أو Git.
 
-```bash
-SUPABASE_URL=https://<project-ref>.supabase.co \
-SUPABASE_ANON_KEY=<public-anon-key> \
-./gradlew assembleDebug
-```
+## نطاق العقود
 
-The app intentionally does not include `service_role`, passwords, or any private key. Values are absent by default and the login screen reports missing configuration rather than simulating authentication.
+- A01–A15 موصولة بمصادر Supabase/RPC المعتمدة في `database/`، مع إظهار حالات التحميل والخطأ/الخلو واللقطات المشفرة عند انقطاع الشبكة.
+- المصادقة عبر Supabase Auth، وتجديد الجلسة ثم فحص `is_admin()`، وقراءة permissions من `admin_account_info()`؛ كل mutation يعاد تفويضها في RPC/RLS.
+- Offline read-only: لا تُجرى mutations أو export دون تحقق صلاحية حي. تحديث WorkManager محدود بالاتصال ويعيد محاولة أخطاء الخادم المؤقتة.
+- **A04:** لا يحرر Admin رقم الهاتف. يقتصر الإجراء على العرض وتغيير حالة علاقة الرقم/الأرشفة وفق `admin_set_customer_number_status`.
+- **A07:** تسجيل إكمال المهمة يتطلب أن يكون الدفع قد نُفذ خارجيًا وأن يدخل المشغل مرجعه؛ التطبيق لا ينفذ عملية الدفع.
+- **A08:** Provider وTelecom Prefixes وProvider Tariffs عبر RPCs مدققة؛ عقود prefix/tariff الإضافية في `database/migrations/004_admin_provider_catalog_rpcs.sql`.
+- **A13:** `notifications` هو سجل التسليم للمستخدمين باستخدام `admin_alert`؛ `admin_notifications` سجل حملات الإدارة الموجود أصلًا في migration 002.
+- التقارير تقرأ الفئات المصرح بها، وCSV لا يفتح قبل تحقق `admin_reports.export` من Backend.
 
-## Data integrity and security
+## حدود الاعتماد
 
-- Email/password authentication uses Supabase Auth; a successful login is followed by the base migration's `is_admin()` identity check. Migration 002 adds per-operation `admin_has_permission()` checks for the Admin data and RPC contracts.
-- Auth session material and local read snapshots are stored with AndroidX encrypted preferences.
-- Read requests use the tables and RPC contracts from migrations 001/002; those migrations have not been applied or tested against a live database.
-- The app now binds purchase approval/rejection and task completion to real RPC contracts. Rejection requires a reason; task completion requires the operator to enter an external payment reference and does not itself execute the payment.
-- Migration 002 defines audited task reschedule/cancel, profile/status, provider/package/payment-method/settings, notification, and role-aware contracts. Some of these flows still need forms/actions wired in the Android UI; see `IMPLEMENTATION_BLOCKERS.md` and `../MANUS/PHASE_2_STATE.md`.
-- Background WorkManager refresh is read-only, network-constrained, and rechecks the Admin role. Offline snapshots are marked stale and cannot be used to perform mutations.
-- Building and parsing SQL do not apply or alter a database.
-
-## Readiness
-
-Phase 2 remains in progress, not production-ready. No database exists or is connected in this work; migration 002 has only been statically parsed, and live auth, RLS, RPC, device/UI, rollback and concurrency acceptance tests remain pending. Do not claim completion until the blockers and screen matrix are closed.
+Migrations `001`–`004` و`database/AMAN_DATABASE_FINAL.sql` ملفات مصدر فقط ولم تُطبق/تُختبر على Supabase الحية. يلزم التحقق من schema وRLS والأدوار ونتائج RPC في البيئة المخولة قبل الإنتاج. لم يجر اختبار على جهاز، ولا توجد صور مرجعية كافية لمقارنة مرئية دقيقة. راجع `IMPLEMENTATION_BLOCKERS.md` و`../MANUS/PHASE_2_STATE.md` و`../MANUS/HANDOFF.md`.

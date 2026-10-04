@@ -14,16 +14,16 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-class ContractException(message: String) : Exception(message)
-class BackendResponseException(message: String) : Exception(message)
+class BackendResponseException(val statusCode: Int, message: String) : Exception(message)
 
 internal data class AmanSession(val accessToken: String, val refreshToken: String, val userId: String, val expiresAtMillis: Long)
 
-/** Direct client-side use of Supabase Auth/PostgREST. The only accepted key is the public anon key. */
+/** Supabase Auth/PostgREST client. The only accepted API key is the public anon key. */
 class SupabaseGateway(context: Context) {
     private val baseUrl = BuildConfig.SUPABASE_URL.trimEnd('/')
     private val anonKey = BuildConfig.SUPABASE_ANON_KEY
-    private val http = OkHttpClient.Builder().connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS).build()
     private val jsonType = "application/json; charset=utf-8".toMediaType()
     private val preferences by lazy {
         val masterKey = MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
@@ -36,6 +36,7 @@ class SupabaseGateway(context: Context) {
     fun configurationMessage(): String? = if (isConfigured()) null else
         "إعدادات خدمة المصادقة غير مهيأة. مرّر SUPABASE_URL وSUPABASE_ANON_KEY وقت البناء؛ لا تضع service_role أو أسرارًا داخل التطبيق."
     fun currentUserId(): String? = readSession()?.userId
+
     fun canUseCachedAdminSession(): Boolean {
         val session = readSession() ?: return false
         val lastVerified = preferences.getLong("admin_verified_at", 0L)
@@ -59,8 +60,37 @@ class SupabaseGateway(context: Context) {
         allowed
     }
 
-    suspend fun select(table: String, query: String = "select=*&limit=100"): String = authenticatedRequest("/rest/v1/$table?$query", "GET", null)
-    suspend fun rpc(name: String, arguments: JSONObject): String = authenticatedRequest("/rest/v1/rpc/$name", "POST", arguments.toString())
+    suspend fun hasPermission(code: String): Boolean {
+        val result = authenticatedRequest("/rest/v1/rpc/admin_has_permission", "POST",
+            JSONObject().put("p_permission_code", code).toString())
+        return result.trim().let { it == "true" || it == "[true]" }
+    }
+
+    suspend fun select(table: String, query: String = "select=*&limit=100"): String =
+        authenticatedRequest("/rest/v1/$table?$query", "GET", null)
+    suspend fun countRows(table: String, filter: String = ""): Long = withContext(Dispatchers.IO) {
+        val session = usableSession() ?: throw ContractException("انتهت جلسة الدخول. سجّل الدخول مجددًا.")
+        val suffix = if (filter.isBlank()) "" else "&$filter"
+        val request = Request.Builder().url("$baseUrl/rest/v1/$table?select=id$suffix")
+            .header("apikey", anonKey).header("Authorization", "Bearer ${session.accessToken}")
+            .header("Accept", "application/json").header("Prefer", "count=exact")
+            .header("Range-Unit", "items").header("Range", "0-0").get().build()
+        http.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                if (response.code == 401) preferences.edit().clear().apply()
+                val message = when (response.code) {
+                    401 -> "انتهت الجلسة أو لم تعد صالحة. سجّل الدخول مجددًا."
+                    403 -> "لا تملك الصلاحية اللازمة لهذا الإجراء."
+                    else -> "تعذر قراءة المؤشر من الخدمة."
+                }
+                throw BackendResponseException(response.code, message)
+            }
+            val range = response.header("Content-Range") ?: throw ContractException("لم تُرجع الخدمة عدد السجلات المطلوب.")
+            range.substringAfterLast('/').toLongOrNull() ?: throw ContractException("تعذر قراءة عدد السجلات من الخدمة.")
+        }
+    }
+    suspend fun rpc(name: String, arguments: JSONObject): String =
+        authenticatedRequest("/rest/v1/rpc/$name", "POST", arguments.toString())
 
     suspend fun signOut() = withContext(Dispatchers.IO) {
         val session = readSession()
@@ -71,7 +101,12 @@ class SupabaseGateway(context: Context) {
 
     private suspend fun authenticatedRequest(path: String, method: String, body: String?): String = withContext(Dispatchers.IO) {
         val session = usableSession() ?: throw ContractException("انتهت جلسة الدخول. سجّل الدخول مجددًا.")
-        requestRaw(path, method, body, session.accessToken)
+        try {
+            requestRaw(path, method, body, session.accessToken)
+        } catch (error: BackendResponseException) {
+            if (error.statusCode == 401) preferences.edit().clear().apply()
+            throw error
+        }
     }
 
     private suspend fun usableSession(): AmanSession? {
@@ -87,7 +122,7 @@ class SupabaseGateway(context: Context) {
             updated
         } catch (error: Exception) {
             preferences.edit().clear().apply()
-            throw ContractException("تعذر تجديد جلسة المصادقة: ${error.message ?: "أعد تسجيل الدخول"}")
+            throw ContractException("انتهت جلسة المصادقة أو تعذر تجديدها. سجّل الدخول مجددًا.")
         }
     }
 
@@ -101,13 +136,20 @@ class SupabaseGateway(context: Context) {
             "GET" -> builder.get()
             "POST" -> builder.post(content ?: "{}".toRequestBody(jsonType))
             "PATCH" -> builder.patch(content ?: "{}".toRequestBody(jsonType))
-            else -> throw ContractException("HTTP method غير مدعوم: $method")
+            else -> throw ContractException("طريقة HTTP غير مدعومة.")
         }
         http.newCall(builder.build()).execute().use { response ->
             val text = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                val reason = runCatching { JSONObject(text).optString("message") }.getOrNull().orEmpty()
-                throw BackendResponseException(reason.ifBlank { "Supabase HTTP ${response.code}" })
+                val details = runCatching { JSONObject(text).optString("message").ifBlank { JSONObject(text).optString("msg") } }.getOrNull().orEmpty()
+                val safeMessage = when (response.code) {
+                    401 -> "انتهت الجلسة أو لم تعد صالحة. سجّل الدخول مجددًا."
+                    403 -> "لا تملك الصلاحية اللازمة لهذا الإجراء."
+                    409 -> "تعارضت البيانات؛ حدّث السجل ثم أعد المحاولة."
+                    400, 422 -> "لم تستوف البيانات شروط التحقق؛ راجع الحقول المطلوبة."
+                    else -> "تعذر إكمال الطلب من الخدمة. تحقق من الاتصال والحالة ثم أعد المحاولة."
+                }
+                throw BackendResponseException(response.code, safeMessage)
             }
             text
         }
@@ -119,10 +161,12 @@ class SupabaseGateway(context: Context) {
         val user = preferences.getString("uid", null) ?: return null
         return AmanSession(access, refresh, user, preferences.getLong("expires", 0L))
     }
+
     private fun persistSession(session: AmanSession) {
         if (session.userId.isBlank()) throw ContractException("استجابة المصادقة لم تتضمن معرّف المستخدم.")
         preferences.edit().putString("access", session.accessToken).putString("refresh", session.refreshToken)
             .putString("uid", session.userId).putLong("expires", session.expiresAtMillis).apply()
     }
+
     private fun ensureConfigured() { if (!isConfigured()) throw ContractException(configurationMessage() ?: "Supabase غير مهيأ") }
 }
