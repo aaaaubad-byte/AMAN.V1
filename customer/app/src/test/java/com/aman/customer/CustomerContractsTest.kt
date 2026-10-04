@@ -9,6 +9,7 @@ import com.aman.customer.data.phoneDigits
 import com.aman.customer.data.CustomerReportCategory
 import com.aman.customer.data.CustomerScreenData
 import com.aman.customer.data.CustomerUiTraceability
+import com.aman.customer.data.v7CanonicalCustomerElements
 import com.aman.customer.data.buildCustomerReportRows
 import com.aman.customer.data.customerReportCsv
 import com.aman.customer.data.isValidCustomerReportRange
@@ -60,6 +61,9 @@ class CustomerContractsTest {
         assertNotNull(CustomerUiTraceability.elements.firstOrNull { it.elementId == "C10.ACTION.SEND" })
         assertNotNull(CustomerUiTraceability.elements.firstOrNull { it.elementId == "C12.ACTION.EXPORT" })
         assertNotNull(CustomerUiTraceability.elements.firstOrNull { it.elementId == "C02.TASK.SUMMARY" })
+        assertEquals(146, v7CanonicalCustomerElements.size)
+        assertEquals(146, v7CanonicalCustomerElements.map { it.elementId }.toSet().size)
+        assertEquals(146, v7CanonicalCustomerElements.count { it.screenId in CustomerUiTraceability.screenIds })
     }
     @Test fun reportFiltersRealRowsByCategoryAndInclusiveDateRange() {
         val ledger = JSONArray()
