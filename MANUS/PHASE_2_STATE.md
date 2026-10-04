@@ -37,7 +37,7 @@
 - SQL النهائي يطابق concatenation للمigrations `001`–`004` حرفيًا (`cmp` ناجح).
 - فحص parser PostgreSQL غير متاح في هذه الجلسة الأخيرة (`ModuleNotFoundError: pglast`)، لذلك لا نزعم نجاح parser للمigration 004 ضمن هذا checkpoint. لا SQL منفذ.
 - لم يُختبر التطبيق على محاكي/جهاز، ولم تتوفر قيم `SUPABASE_URL` و`SUPABASE_ANON_KEY` للمشروع المقصود.
-- `git diff --check` وcommit/push إلى `main` هما خطوة إغلاق checkpoint الجارية؛ سيُسجل hash النهائي هنا بعد الإنشاء.
+- `git diff --check` نجح قبل الحفظ؛ commit `b69d5ec` (`phase 2: complete admin android application`) دُفع بنجاح إلى `origin/main`.
 
 ## الملفات والعقود التي تغيرت
 

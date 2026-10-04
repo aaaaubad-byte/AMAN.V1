@@ -3,8 +3,8 @@
 ## المستودع والتنفيذ
 
 - المستودع: `aaaaubad-byte/AMAN.V1`، الفرع: `main`.
-- HEAD الأب قبل checkpoint AMAN-2: `8807700` — مصادر STAGE 3/AMAN-1.
-- المرحلة الحالية: **AMAN-2 — إكمال مصدر تطبيق Admin وربط العقود**. تغييراتها تحفظ الآن في commit/push مستقل بعد `git diff --check`.
+- commit AMAN-2 المنشور: `b69d5ec` — `phase 2: complete admin android application`؛ الأب المباشر `e054ec6`.
+- المرحلة الحالية: **AMAN-2 — إكمال مصدر تطبيق Admin وربط العقود**. اجتاز `git diff --check` ودُفع إلى `origin/main`.
 - لا تغييرات على `customer/` أو `MANUS/PHASE_1_STATE.md`.
 
 ## حالة المراحل

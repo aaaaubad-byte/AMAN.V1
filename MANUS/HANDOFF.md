@@ -3,8 +3,8 @@
 ## المستودع والحالة
 
 - Repository: `aaaaubad-byte/AMAN.V1`، branch `main`.
-- التغييرات الجديدة تُحفظ في checkpoint AMAN-2؛ تحقّق من hash التنفيذ الحالي بـ`git log -1 --oneline` بعد push.
-- الأب قبل checkpoint: `8807700` على `main`.
+- checkpoint AMAN-2 محفوظ ومدفوع إلى `origin/main`: commit `b69d5ec` — `phase 2: complete admin android application`.
+- الأب المباشر للـcheckpoint: `e054ec6`.
 - **حالة العمل:** كود Admin وعقوده مترجمة/مختبرة محليًا؛ تكامل Supabase الحي وجهاز Android غير مختبرين. لا يوجد ادعاء جاهزية إنتاج.
 
 ## ما اكتمل في AMAN-2

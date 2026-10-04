@@ -36,4 +36,5 @@
 - A08: أضيفت `database/migrations/004_admin_provider_catalog_rpcs.sql` لعقود إدارة Prefixes وProvider Tariffs، وتوليدت `database/AMAN_DATABASE_FINAL.sql` من migrations 001–004. الملف لم يُطبق على قاعدة حية.
 - A13 يستعمل `notifications` لتسليم الرسائل، ويحتفظ بـ`admin_notifications` الموجود في migration 002 لسجل الحملات؛ لم ينشئ AMAN-2 جدول إشعارات إضافيًا.
 - التحقق بعد آخر تعديل مصدر: `./gradlew testDebugUnitTest --no-daemon --console=plain` — BUILD SUCCESSFUL، 7 اختبارات. تطابق ملف SQL النهائي مع concat migrations 001–004؛ لا SQL حي ولا APK مسلم.
+- حُفظ checkpoint على `main` في commit `b69d5ec` بعد نجاح `git diff --check`.
 - لا تزال تهيئة/صلاحيات Supabase الحية، التحقق على جهاز، وقرار تكامل/توثيق تنفيذ الدفع الخارجي بوابات مفتوحة. التفاصيل في `MANUS/PHASE_2_STATE.md` و`admin/IMPLEMENTATION_BLOCKERS.md`.
