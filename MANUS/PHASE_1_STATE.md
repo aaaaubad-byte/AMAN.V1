@@ -6,13 +6,17 @@ Phase 1 — Database
 
 ## Current status
 
-**SQL migration created and committed locally for review. Phase is not complete.**
+**AMAN-1 source repair migration created and parser-validated locally. Live database phase is not complete.**
 
 ## Implemented in repository
 
 - `database/migrations/001_initial_schema.sql`
 - `database/README.md`
+- `database/migrations/002_admin_contracts.sql`
+- `database/migrations/003_aman1_backend_repairs.sql`
+- `database/AMAN_DATABASE_FINAL.sql`
 - Core AMAN schema entities, enums, constraints, indexes, triggers, RPC definitions, ledgers, audit table, notifications, task plans, and RLS policies are represented in the migration.
+- AMAN-1 repairs cover Auth→Profile provisioning, first-approved-purchase subscriber provisioning, RPC-only customer-number/support mutations, purchase/activation/extension idempotency, provider resolution, expiration/renewal, task post-expiry/visibility rules, canonical admin role/audit/financial vocabulary, and canonical final SQL.
 
 ## Not verified yet
 
@@ -22,6 +26,7 @@ Phase 1 — Database
 - RLS and role-boundary tests have not been run against a live project.
 - Atomicity, rollback, idempotency, and concurrency tests have not been run against a live project.
 - No live database was modified in this phase.
+- Static PostgreSQL parsing passed for migrations 001–003 and the concatenated final SQL; no SQL was executed.
 
 ## Database connection status
 

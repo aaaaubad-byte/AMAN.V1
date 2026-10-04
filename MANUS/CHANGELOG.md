@@ -20,3 +20,10 @@
 
 - أضيفت migrations المرحلة الأولى والثانية في `database/` كمصادر عقود.
 - تطبيق هذه الملفات والتحقق من قاعدة Supabase المقصودة لم يثبت؛ لا تعد المرحلة مكتملة على قاعدة حية.
+
+## AMAN-1 — Backend/Database source repairs
+
+- أضيفت `database/migrations/003_aman1_backend_repairs.sql` و`database/AMAN_DATABASE_FINAL.sql`.
+- شملت الإصلاحات provisioning من Auth إلى Profile، إنشاء subscriber بعد أول اعتماد، idempotency قبل mutation للشراء/التفعيل/التمديد، التحقق من ملكية الرقم، authoritative provider resolution، expiration/renewal، post-expiry وvisibility task rules، ودعم customer عبر RPC آمن.
+- وُحّد دور الإدارة إلى `admin`، وحقول Audit إلى `actor_user_id / actor_role / before / after`، وأنواع Financial Ledger إلى `points_purchase_income / task_payment / expense / adjustment`، مع الإبقاء على جدول `notifications` الواحد حسب قرار المالك.
+- نجح فحص parser لـPostgreSQL على migrations 001–003 وملف SQL النهائي. لم تُنفذ SQL ولم يُتصل بـSupabase حي.

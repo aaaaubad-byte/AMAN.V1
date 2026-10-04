@@ -35,4 +35,12 @@ cd customer && ./gradlew clean testDebugUnitTest assembleDebug --no-daemon --con
 1. اقرأ `MANUS/PROJECT_STATE.md` و`MANUS/PHASE_3_STATE.md` و`customer/IMPLEMENTATION_BLOCKERS.md`.
 2. ابدأ مرحلة الإصلاح اللاحقة بحسم العقود المصدرية والاختبارات المخولة، لا بإعادة إنشاء `customer/`.
 3. عالج عوائق `admin/` فقط في مسار المرحلة الرابعة المطلوب؛ عمل STAGE 3 لم يغير `admin/`.
-4. لم يحدث اتصال حي، تنفيذ SQL، استعلامات/RPC حقيقية أو تغيير ملفات `database/`.
+4. قبل AMAN-1 لم يحدث اتصال حي، تنفيذ SQL، استعلامات/RPC حقيقية أو تغيير ملفات `database`.
+
+## AMAN-1 — Backend/Database source repair checkpoint
+
+- Added `database/migrations/003_aman1_backend_repairs.sql` and generated `database/AMAN_DATABASE_FINAL.sql` from migrations 001–003.
+- Implemented source-level repairs for profile provisioning, subscriber creation after approval, secure purchase/number/support RPCs, provider resolution, activation authorization, pre-mutation idempotency, expiration/renewal, task planning settings, canonical admin role `admin`, audit fields, and financial ledger vocabulary.
+- Product decisions recorded in `database/README.md`: one `notifications` table, canonical audit fields, archive semantics for numbers, RPC-only support writes, and customer report export in scope.
+- Static parser validation passed for all migrations and the final SQL artifact. No SQL was executed and no Supabase project was connected.
+- Remaining gate: apply only in a separately authorized clean database, then run schema/RLS/RPC/concurrency/idempotency/end-to-end tests and update this handoff with live results. Do not claim live readiness from the static pass.

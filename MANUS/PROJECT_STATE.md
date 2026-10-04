@@ -5,7 +5,7 @@
 - المستودع: `aaaaubad-byte/AMAN.V1`.
 - الفرع: `main`.
 - نقطة الأساس قبل هذا التسليم: `248c431` — `phase 2: add admin contracts and checkpoint`.
-- مرحلة العمل الحالية: **STAGE 3 — CUSTOMER ANDROID SOURCE**، ملفاتها مستقلة داخل `customer/`.
+- مرحلة العمل الحالية: **AMAN-1 — BACKEND/DATABASE SOURCE REPAIR**، مع إبقاء مصادر Android مستقلة وعدم تعديل واجهاتها في هذه المرحلة.
 - مصدر المرحلة الثالثة موثّق في GitHub على `main` عبر commit `8807700`; لا APK نشر أو إصدار منتج.
 
 ## حالة المراحل
@@ -14,15 +14,17 @@
 - STAGE 2: تطبيق Admin Android موجود ومبني جزئيًا؛ **غير مكتمل وظيفيًا** وفق `admin/IMPLEMENTATION_BLOCKERS.md` و`MANUS/PHASE_2_STATE.md`. المرحلة الثالثة لم تصلح شيفرة الإدارة.
 - STAGE 3: ملفات مشروع العميل C01–C15، التنقل والطبقات والعقود المتاحة، وثائق العوائق والاختبارات أُنشئت تحت `customer/`. الكتابات التي لا يدعمها SQL موضحة ومعطلة بوضوح. جاهزية backend الحية غير مثبتة.
 - STAGE 4 (لاحقًا): إصلاح/استكمال عقود SQL ومسارات الإدارة والعميل والتحقق المتكامل ضمن تفويضها؛ لا تعِد إنشاء مجلد العميل من الصفر.
+- AMAN-1: migration إصلاحية `database/migrations/003_aman1_backend_repairs.sql` وملف SQL النهائي `database/AMAN_DATABASE_FINAL.sql` أُنشئا وفُحصا static؛ لا يعني ذلك تطبيقًا حيًا أو جاهزية إنتاج.
 
 ## ما تم التحقق منه
 
 - `cd customer && ./gradlew clean testDebugUnitTest assembleDebug --no-daemon --console=plain` — **BUILD SUCCESSFUL**، 4 اختبارات ناجحة.
 - الاختبارات تغطي كتالوج الشاشات واختيار أطول بادئة وتصفية البادئات المعطلة وحساب تكلفة المدخل الإيجابي؛ لا تغطي UI أو تكاملًا حيًا.
 - `assembleDebug` للبناء والتحقق فقط. لم يُسلّم أو يُنشر APK، ولم يُختبر على جهاز/محاكي.
-- لا اتصال Supabase ولا queries/RPC على قاعدة حقيقية، لا تنفيذ SQL، ولا تعديل على `database/`.
+- لا اتصال Supabase ولا queries/RPC على قاعدة حقيقية، ولا تنفيذ SQL؛ أضيفت إصلاحات AMAN-1 إلى مصادر `database/` فقط.
 - طلب الشراء Offline قد يحفظ intent مشفرًا ويرسله لاحقًا بمفتاح ثابت؛ يظل محليًا ولا يحتسب نقاطًا حتى يرد Backend. التفعيل والتمديد لا يعملان Offline.
 - لا مفاتيح مشروع Supabase مهيأة. لا تضمين `service_role`.
+- فحص parser لـPostgreSQL نجح للمigrations 001–003 وملف SQL النهائي؛ لم تُنفذ SQL ولم يُتصل بقاعدة Supabase.
 
 ## الحدود المعروفة
 
