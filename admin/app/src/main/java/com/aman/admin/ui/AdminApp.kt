@@ -325,7 +325,7 @@ private fun RecordSectionScreen(state: AdminUiState, viewModel: AdminViewModel) 
                     val isSelected = if (state.section == AdminSection.REPORTS) false else if (state.relatedKind != null) sourceIndex == state.relatedSelectedIndex else index == state.selectedIndex
                     CompactRecord(row, isSelected, {
                         if (state.relatedKind != null) viewModel.selectRelated(sourceIndex)
-                        else if (state.section == AdminSection.SEARCH) viewModel.open(searchDestination(row))
+                        else if (state.section == AdminSection.SEARCH) viewModel.open(searchDestination(row), keepSearch = true)
                         else if (state.section != AdminSection.REPORTS) viewModel.select(index)
                     },
                         if (state.section == AdminSection.REPORTS) AdminSection.REPORTS else state.section)

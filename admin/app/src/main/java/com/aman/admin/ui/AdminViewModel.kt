@@ -137,8 +137,9 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
         }
     }
 
-    fun open(section: AdminSection) {
-        _state.value = _state.value.copy(section = section, searchText = "", filterStatus = "", filterFrom = "", filterTo = "", filterProviderQuery = "",
+    fun open(section: AdminSection, keepSearch: Boolean = false) {
+        val preservedSearch = _state.value.searchText.takeIf { keepSearch }.orEmpty()
+        _state.value = _state.value.copy(section = section, searchText = preservedSearch, filterStatus = "", filterFrom = "", filterTo = "", filterProviderQuery = "",
             selectedIndex = -1, relatedKind = null, relatedRows = emptyList(), relatedSelectedIndex = -1, formKind = null,
             reportRows = emptyList(), error = null, notice = null)
         if (section == AdminSection.REPORTS) _state.value = _state.value.copy(reportTypeId = ReportType.all.first().id)
