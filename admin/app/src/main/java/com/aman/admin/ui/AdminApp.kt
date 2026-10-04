@@ -269,7 +269,7 @@ private fun RecordSectionScreen(state: AdminUiState, viewModel: AdminViewModel) 
     Column(Modifier.fillMaxSize()) {
         TopHeader(state.section.title, state.adminName, true) { viewModel.open(AdminSection.HOME) }
         StatusMessages(state, viewModel)
-        if (state.section != AdminSection.ACCOUNT && state.section != AdminSection.REPORTS && state.section != AdminSection.NOTIFICATIONS) {
+        if (state.section != AdminSection.ACCOUNT && state.section != AdminSection.REPORTS) {
             OutlinedTextField(value = state.searchText, onValueChange = viewModel::updateSearch,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
                 label = { Text(if (state.section == AdminSection.SEARCH) "البحث في السجلات المتاحة" else "بحث في ${state.section.title}") },
@@ -545,7 +545,8 @@ private fun StatusFilters(selected: String, section: AdminSection, onSelect: (St
 @Composable
 private fun SearchTypeFilters(selected: String, onSelect: (String) -> Unit) {
     val types = listOf("" to "الكل", "profiles" to "المستخدمون", "phone_numbers" to "الأرقام", "points_purchase_requests" to "طلبات الشراء",
-        "telecom_providers" to "الشركات", "operations" to "العمليات", "payment_tasks" to "المهام")
+        "telecom_providers" to "الشركات", "operations" to "العمليات", "payment_tasks" to "المهام", "admin_notifications" to "الإشعارات",
+        "points_packages" to "الباقات", "payment_methods" to "وسائل الدفع", "task_settings" to "إعدادات التشغيل")
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         types.forEach { (value, label) -> OutlinedButton(onClick = { onSelect(value) }) { Text(if (selected == value) "✓ $label" else label, maxLines = 1) } }
     }

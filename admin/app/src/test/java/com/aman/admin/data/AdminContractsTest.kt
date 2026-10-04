@@ -57,4 +57,15 @@ class AdminContractsTest {
         assertEquals("admin_set_customer_number_status", AdminMutation.SET_CUSTOMER_NUMBER_STATUS.rpcName)
         assertFalse(AdminMutation.entries.any { it.name.contains("EDIT_NUMBER") })
     }
+
+    @Test fun v7AdminTraceabilityCoversEveryRouteAndHasNoForbiddenA04Activation() {
+        assertEquals(AdminUiTraceability.V7_ELEMENT_COUNT, AdminUiTraceability.elements.size)
+        assertEquals(AdminUiTraceability.V7_ELEMENT_COUNT, AdminUiTraceability.ids().size)
+        assertEquals((1..15).map { "A%02d".format(it) }.toSet(), AdminUiTraceability.elements.map { it.screenId }.toSet())
+        assertFalse(AdminUiTraceability.ids().contains("A04.ACTION.ACTIVATE"))
+        AdminUiTraceability.elements.forEach { element ->
+            assertTrue(element.readPermission.startsWith("admin_"))
+            assertTrue(element.elementId.startsWith(element.screenId + "."))
+        }
+    }
 }

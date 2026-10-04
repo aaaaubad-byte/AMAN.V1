@@ -60,6 +60,7 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             AdminSection.PURCHASES -> "submitted_at"
             AdminSection.ADDED_NUMBERS -> "added_at"
             AdminSection.ACTIVE_NUMBERS -> "started_at"
+            AdminSection.SUBSCRIBERS -> "became_subscriber_at"
             else -> "created_at"
         }
         val minimum = parseDate(from, false)?.let { runCatching { Instant.parse(it) }.getOrNull() }
@@ -239,6 +240,10 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             Triple("telecom_providers", "name,short_name,code", "شركة"),
             Triple("operations", "operation_type,reference_type", "عملية"),
             Triple("payment_tasks", "external_payment_reference", "مهمة"),
+            Triple("admin_notifications", "title,body,target_type", "إشعار إداري"),
+            Triple("points_packages", "name", "باقة نقاط"),
+            Triple("payment_methods", "name", "وسيلة دفع"),
+            Triple("task_settings", "currency", "إعدادات تشغيل"),
         )
         val filteredSources = sources.filter { typeFilter.isBlank() || it.first == typeFilter }
         val merged = JSONArray()
