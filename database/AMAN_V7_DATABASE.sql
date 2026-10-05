@@ -1,6 +1,6 @@
 -- AMAN | أمان — V7 canonical database build
 -- Phase 1 deliverable: clean, deterministic PostgreSQL/Supabase schema.
--- Source authority: V7.md + V7 ARP.md. No legacy migration is required.
+-- Source authority: V7.md on origin/main. No legacy migration is required.
 -- This file is intentionally not executed against Supabase in this phase.
 
 begin;
