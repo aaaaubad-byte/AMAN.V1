@@ -358,37 +358,6 @@ CREATE TRIGGER protection_period_task_plan_generator
   AFTER INSERT OR UPDATE OF end_at,status ON public.protection_period
   FOR EACH ROW EXECUTE FUNCTION public.on_protection_period_change_generate_tasks();
 
-CREATE OR REPLACE FUNCTION public.enforce_single_active_protection_per_phone()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path TO 'public'
-AS $$
-DECLARE v_phone_id uuid;
-BEGIN
-  IF NEW.status<>'ACTIVE' OR NEW.end_at<=now() THEN RETURN NEW; END IF;
-  SELECT pn.id INTO v_phone_id
-  FROM public.number_protection_identity ni
-  JOIN public.customer_number cn ON cn.id=ni.customer_number_id
-  JOIN public.phone_number pn ON pn.id=cn.phone_number_id
-  WHERE ni.id=NEW.protection_identity_id;
-  IF v_phone_id IS NULL THEN RAISE EXCEPTION 'PHONE_NUMBER_NOT_FOUND'; END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended(v_phone_id::text||':ACTIVE_PROTECTION',0));
-  IF EXISTS (
-    SELECT 1 FROM public.protection_period pp
-    JOIN public.number_protection_identity ni ON ni.id=pp.protection_identity_id
-    JOIN public.customer_number cn ON cn.id=ni.customer_number_id
-    WHERE cn.phone_number_id=v_phone_id AND pp.status='ACTIVE' AND pp.end_at>now()
-      AND pp.id IS DISTINCT FROM NEW.id
-  ) THEN RAISE EXCEPTION 'PHONE_ALREADY_HAS_ACTIVE_PROTECTION'; END IF;
-  RETURN NEW;
-END;
-$$;
-DROP TRIGGER IF EXISTS protection_period_single_active_phone ON public.protection_period;
-CREATE TRIGGER protection_period_single_active_phone
-  BEFORE INSERT OR UPDATE OF status,end_at,protection_identity_id ON public.protection_period
-  FOR EACH ROW EXECUTE FUNCTION public.enforce_single_active_protection_per_phone();
-
 CREATE OR REPLACE FUNCTION public.generate_scheduled_tasks()
 RETURNS integer
 LANGUAGE plpgsql
