@@ -1,6 +1,7 @@
 package com.aman.customer.ui
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,36 +17,38 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.activity.compose.BackHandler
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aman.customer.data.CustomerScreen
+import com.aman.customer.data.CustomerUiState
 import com.aman.customer.data.LoadPhase
 import com.aman.customer.data.traceElement
 
@@ -54,41 +57,60 @@ fun AmanCustomerApp(context: Context) {
     AppContextHolder.context = context.applicationContext
     val vm: CustomerViewModel = viewModel(factory = CustomerViewModel.factory(context))
     val state by vm.state.collectAsState()
+
     if (!state.authenticated) {
-        AuthScreen(vm)
+        when (state.screen) {
+            CustomerScreen.INITIALIZATION -> InitializationScreen()
+            CustomerScreen.SIGN_UP -> SignUpScreen(state, vm)
+            CustomerScreen.RECOVERY -> RecoveryScreen(state, vm)
+            else -> LoginScreen(state, vm)
+        }
         return
     }
+
     BackHandler(enabled = state.navigationBackStack.isNotEmpty()) { vm.back() }
-    val tabs = listOf(CustomerScreen.ABOUT, CustomerScreen.SEARCH, CustomerScreen.HOME, CustomerScreen.REPORTS, CustomerScreen.ACCOUNT)
+    val tabs = listOf(CustomerScreen.SUPPORT, CustomerScreen.SEARCH, CustomerScreen.HOME, CustomerScreen.REPORTS, CustomerScreen.ACCOUNT)
     Scaffold(containerColor = MaterialTheme.colorScheme.background, bottomBar = {
         NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
             tabs.forEach { destination ->
-                NavigationBarItem(selected = state.screen == destination, onClick = { vm.selectTab(destination) },
-                    modifier = Modifier.traceElement(when (destination) {
-                        CustomerScreen.ABOUT -> "C01.NAV.ABOUT"; CustomerScreen.SEARCH -> "C01.NAV.SEARCH"; CustomerScreen.HOME -> "C01.NAV.HOME"
-                        CustomerScreen.REPORTS -> "C01.NAV.REPORTS"; else -> "C01.NAV.ACCOUNT"
-                    }),
-                    icon = { Text(when (destination) { CustomerScreen.ABOUT -> "أ"; CustomerScreen.SEARCH -> "⌕"; CustomerScreen.HOME -> "⌂"; CustomerScreen.REPORTS -> "▤"; else -> "◉" }) },
-                    label = { Text(destination.title, style = MaterialTheme.typography.labelSmall) })
+                NavigationBarItem(
+                    selected = state.screen == destination,
+                    onClick = { vm.selectTab(destination) },
+                    modifier = Modifier.traceElement("C04.NAV.${destination.id}"),
+                    icon = { Text(when (destination) {
+                        CustomerScreen.SUPPORT -> "✉"
+                        CustomerScreen.SEARCH -> "⌕"
+                        CustomerScreen.HOME -> "⌂"
+                        CustomerScreen.REPORTS -> "▤"
+                        else -> "◉"
+                    }) },
+                    label = { Text(destination.title, style = MaterialTheme.typography.labelSmall) },
+                )
             }
         }
     }) { insets ->
         Column(Modifier.fillMaxSize().padding(insets)) {
-            val unreadCount = state.data?.related?.get("unread")?.length() ?: 0
-            BrandHeader(state.screen.title, unreadCount.takeIf { state.screen == CustomerScreen.HOME },
-                onNotifications = if (state.screen == CustomerScreen.HOME) ({ vm.navigate(CustomerScreen.NOTIFICATIONS) }) else null)
+            val unreadCount = state.data?.related?.get("notifications")?.let { array ->
+                (0 until array.length()).count { array.optJSONObject(it)?.optBoolean("is_read", false) == false }
+            } ?: 0
+            BrandHeader(
+                title = state.screen.title,
+                unreadCount = unreadCount.takeIf { state.screen == CustomerScreen.HOME },
+                onNotifications = if (state.screen == CustomerScreen.HOME) ({ vm.navigate(CustomerScreen.NOTIFICATIONS) }) else null,
+                onAbout = { vm.navigate(CustomerScreen.ABOUT) },
+            )
             if (state.navigationBackStack.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { vm.back() }, modifier = Modifier.traceElement("${state.screen.id}.HEADER.BACK")) { Text("رجوع") }
                     TextButton(onClick = { vm.load(state.screen) }, modifier = Modifier.traceElement("${state.screen.id}.HEADER.REFRESH")) { Text("تحديث") }
                 }
             }
-            if (state.stale) NoticeBanner("تعرض بيانات قديمة أو جزئية · آخر تحديث ${state.data?.loadedAt?.takeIf { it > 0L }?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it)) } ?: "غير معروف"}", warning = true)
+            if (state.stale) NoticeBanner("المعروض نسخة محفوظة قديمة · آخر تحديث ${state.data?.loadedAt?.takeIf { it > 0L }?.let { java.text.DateFormat.getDateTimeInstance().format(java.util.Date(it)) } ?: "غير معروف"}", warning = true)
             if (state.phase == LoadPhase.LOADING && state.data == null) {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             } else {
-                if (state.error != null) NoticeBanner(state.error!!, warning = true)
-                if (state.mutationMessage != null) NoticeBanner(state.mutationMessage!!, warning = !state.mutationMessage!!.startsWith("تم"))
+                state.error?.let { NoticeBanner(it, true) }
+                state.mutationMessage?.let { NoticeBanner(it, warning = it.startsWith("تعذر") || it.startsWith("لا يوجد")) }
                 CustomerScreenContent(state, vm, Modifier.weight(1f).fillMaxWidth())
             }
         }
@@ -96,61 +118,124 @@ fun AmanCustomerApp(context: Context) {
 }
 
 @Composable
-private fun BrandHeader(title: String, unreadCount: Int?, onNotifications: (() -> Unit)?) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+private fun BrandHeader(title: String, unreadCount: Int?, onNotifications: (() -> Unit)?, onAbout: () -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text("AMAN  |  أمان", Modifier.traceElement("C01.HEADER.LOGO"), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+            Text("AMAN | أمان", Modifier.traceElement("C04.HEADER.BRAND"), color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
             Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
         if (unreadCount != null && onNotifications != null) {
-            IconButton(onClick = onNotifications, modifier = Modifier.traceElement("C01.HEADER.NOTIFICATIONS")) {
+            IconButton(onClick = onNotifications, modifier = Modifier.traceElement("C04.NOTIFICATIONS")) {
                 Icon(Icons.Outlined.Notifications, contentDescription = if (unreadCount > 0) "الإشعارات، $unreadCount غير مقروء" else "الإشعارات")
             }
-        } else Text("◆", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium)
+        }
+        TextButton(onClick = onAbout, modifier = Modifier.traceElement("C19.OPEN")) { Text("عن أمان") }
     }
 }
 
 @Composable
-private fun AuthScreen(vm: CustomerViewModel) {
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var name by remember { mutableStateOf("") }
-    val state by vm.state.collectAsState()
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 25.dp),
-        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Spacer(Modifier.height(30.dp))
-        Box(Modifier.background(MaterialTheme.colorScheme.surface, CircleShape).padding(24.dp)) {
-            Text("أمان", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
+private fun InitializationScreen() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Box(Modifier.background(MaterialTheme.colorScheme.surface, CircleShape).padding(26.dp)) {
+                Text("أمان", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
+            }
+            Text("أمان حماية وضمان", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            CircularProgressIndicator(Modifier.traceElement("C01.LOADING"))
+            Text("جارٍ التحقق من الجلسة وإعدادات الحساب", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Spacer(Modifier.height(14.dp))
-        Text("أمان حماية وضمان", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(if (state.signUpMode) "إنشاء حساب عميل" else "تسجيل الدخول", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(24.dp))
-        if (state.signUpMode) {
-            OutlinedTextField(value = name, onValueChange = { name = it }, modifier = Modifier.fillMaxWidth(), label = { Text("اسم العميل") }, singleLine = true)
-            Spacer(Modifier.height(10.dp))
-        }
-        OutlinedTextField(value = email, onValueChange = { email = it }, modifier = Modifier.fillMaxWidth(), label = { Text("البريد الإلكتروني") }, singleLine = true)
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(value = password, onValueChange = { password = it }, modifier = Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
-        Spacer(Modifier.height(14.dp))
-        if (!vm.isConfigured()) NoticeBanner(vm.configurationMessage() ?: "إعداد Supabase غير متاح.", true)
-        state.authError?.let { NoticeBanner(it, true) }
-        state.authNotice?.let { NoticeBanner(it, false) }
-        Button(onClick = { vm.authenticate(email, password, name) }, enabled = !state.authBusy && email.contains("@") && password.isNotBlank() && vm.isConfigured(),
-            modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
-            if (state.authBusy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp)
-            else Text(if (state.signUpMode) "إنشاء الحساب" else "دخول")
-        }
-        TextButton(onClick = { vm.setSignUpMode(!state.signUpMode) }) { Text(if (state.signUpMode) "لديك حساب؟ سجّل الدخول" else "إنشاء حساب عميل") }
-        Text("تتم إدارة كلمة المرور بواسطة Supabase Auth ولا تُخزن في قاعدة AMAN.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(30.dp))
     }
+}
+
+@Composable
+private fun LoginScreen(state: CustomerUiState, vm: CustomerViewModel) {
+    var email by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    AuthScaffold(title = "تسجيل الدخول", screenId = "C02") {
+        OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth().traceElement("C02.EMAIL"), label = { Text("البريد الإلكتروني") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+        OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().traceElement("C02.PASSWORD"), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+        AuthFeedback(state, vm)
+        Button(onClick = { vm.signIn(email, password) }, enabled = !state.authBusy && email.contains("@") && password.isNotBlank() && vm.isConfigured(),
+            Modifier.fillMaxWidth().traceElement("C02.SUBMIT")) {
+            if (state.authBusy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp) else Text("تسجيل الدخول")
+        }
+        TextButton(onClick = { vm.navigate(CustomerScreen.SIGN_UP) }, modifier = Modifier.traceElement("C02.SIGNUP")) { Text("إنشاء حساب جديد") }
+        TextButton(onClick = { vm.navigate(CustomerScreen.RECOVERY) }, modifier = Modifier.traceElement("C02.RECOVERY")) { Text("نسيت كلمة المرور؟") }
+        Text("تدار كلمات المرور بواسطة Supabase Auth ولا تُخزن في قاعدة AMAN.", textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun SignUpScreen(state: CustomerUiState, vm: CustomerViewModel) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var email by rememberSaveable { mutableStateOf("") }
+    var password by rememberSaveable { mutableStateOf("") }
+    var confirm by rememberSaveable { mutableStateOf("") }
+    var terms by rememberSaveable { mutableStateOf(false) }
+    var privacy by rememberSaveable { mutableStateOf(false) }
+    AuthScaffold(title = "إنشاء حساب", screenId = "C03") {
+        OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().traceElement("C03.NAME"), label = { Text("الاسم") }, singleLine = true)
+        OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth().traceElement("C03.EMAIL"), label = { Text("البريد الإلكتروني") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+        OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().traceElement("C03.PASSWORD"), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+        OutlinedTextField(confirm, { confirm = it }, Modifier.fillMaxWidth().traceElement("C03.CONFIRM"), label = { Text("تأكيد كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+        TextButton(onClick = { terms = !terms }, modifier = Modifier.fillMaxWidth().traceElement("C03.CONSENT.TERMS")) { Text("${if (terms) "☑" else "□"} أوافق على الشروط") }
+        TextButton(onClick = { privacy = !privacy }, modifier = Modifier.fillMaxWidth().traceElement("C03.CONSENT.PRIVACY")) { Text("${if (privacy) "☑" else "□"} أوافق على سياسة الخصوصية") }
+        TextButton(onClick = { vm.navigate(CustomerScreen.ABOUT) }) { Text("قراءة الشروط والخصوصية") }
+        AuthFeedback(state, vm)
+        Button(onClick = { vm.signUp(name, email, password, confirm, terms, privacy) }, enabled = !state.authBusy && vm.isConfigured(),
+            Modifier.fillMaxWidth().traceElement("C03.SUBMIT")) {
+            if (state.authBusy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp) else Text("إنشاء الحساب")
+        }
+        TextButton(onClick = { vm.navigate(CustomerScreen.LOGIN) }) { Text("لديك حساب؟ تسجيل الدخول") }
+        Text("الحساب الجديد من النوع USER. لا ينشأ اشتراك أو رصيد نقاط تلقائيًا.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun RecoveryScreen(state: CustomerUiState, vm: CustomerViewModel) {
+    var name by rememberSaveable { mutableStateOf("") }
+    var email by rememberSaveable { mutableStateOf("") }
+    var userId by rememberSaveable { mutableStateOf("") }
+    AuthScaffold(title = "استعادة الحساب", screenId = "C20") {
+        Text("أدخل بيانات الاستعادة. لأمان الحساب ستكون نتيجة الطلب عامة ولا تكشف ما إذا كان الاسم أو المعرّف مسجلًا.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().traceElement("C20.NAME"), label = { Text("الاسم") }, singleLine = true)
+        OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth().traceElement("C20.EMAIL"), label = { Text("البريد الإلكتروني") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+        OutlinedTextField(userId, { userId = it }, Modifier.fillMaxWidth().traceElement("C20.USER_ID"), label = { Text("معرّف المستخدم") }, singleLine = true)
+        AuthFeedback(state, vm)
+        Button(onClick = { vm.requestRecovery(name, email, userId) }, enabled = !state.authBusy && vm.isConfigured(),
+            Modifier.fillMaxWidth().traceElement("C20.SUBMIT")) {
+            if (state.authBusy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp) else Text("إرسال تعليمات الاستعادة")
+        }
+        TextButton(onClick = { vm.navigate(CustomerScreen.LOGIN) }) { Text("العودة إلى تسجيل الدخول") }
+    }
+}
+
+@Composable
+private fun AuthScaffold(title: String, screenId: String, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 22.dp),
+        verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("AMAN | أمان", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black,
+            modifier = Modifier.traceElement("$screenId.BRAND"))
+        Spacer(Modifier.height(8.dp))
+        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(18.dp))
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    }
+}
+
+@Composable
+private fun AuthFeedback(state: CustomerUiState, vm: CustomerViewModel) {
+    if (!vm.isConfigured()) NoticeBanner(vm.configurationMessage() ?: "إعداد Supabase غير متاح.", true)
+    state.authError?.let { NoticeBanner(it, true) }
+    state.authNotice?.let { NoticeBanner(it, false) }
 }
 
 @Composable
 fun NoticeBanner(message: String, warning: Boolean) {
     val color = if (warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     Text(message, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)
-        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp)).padding(12.dp), color = color, style = MaterialTheme.typography.bodySmall)
+        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp)).padding(12.dp), color = color,
+        style = MaterialTheme.typography.bodySmall)
 }
