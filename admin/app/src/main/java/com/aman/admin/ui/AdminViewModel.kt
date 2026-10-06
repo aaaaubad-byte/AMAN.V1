@@ -47,6 +47,7 @@ import java.time.Instant
     val formId: String? = null,
     val formParentId: String? = null,
     val formValues: Map<String, String> = emptyMap(),
+    val formOptions: List<JSONObject> = emptyList(),
     val reportTypeId: String = ReportType.all.first().id,
     val reportRows: List<JSONObject> = emptyList(),
     val targetType: String = "all",
@@ -114,6 +115,34 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
 
     fun updateEmail(value: String) { _state.value = _state.value.copy(email = value, error = null) }
 
+    fun recoverPassword() {
+        val email = _state.value.email.trim()
+        if (email.isBlank()) { _state.value = _state.value.copy(error = "أدخل البريد الإلكتروني أولًا."); return }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = true, error = null, notice = null)
+            try {
+                repository.recoverPassword(email)
+                _state.value = _state.value.copy(busy = false, notice = "إذا كان البريد مسجلًا، فستصلك تعليمات الاستعادة.")
+            } catch (error: Exception) {
+                _state.value = _state.value.copy(busy = false, error = error.message ?: "تعذر بدء استعادة الحساب.")
+            }
+        }
+    }
+
+    fun registerAuthIdentity(password: String) {
+        val email = _state.value.email.trim()
+        if (email.isBlank() || password.length < 6) { _state.value = _state.value.copy(error = "أدخل بريدًا صالحًا وكلمة مرور لا تقل عن 6 أحرف."); return }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(busy = true, error = null, notice = null)
+            try {
+                repository.registerAuthIdentity(email, password)
+                _state.value = _state.value.copy(busy = false, notice = "أُنشئت هوية Auth فقط. تحقق من البريد إن طُلب ذلك؛ لا تمنح هذه الخطوة admin_identity أو صلاحية دخول الإدارة، ويلزم تعيين مخوّل منفصل.")
+            } catch (error: Exception) {
+                _state.value = _state.value.copy(busy = false, error = error.message ?: "تعذر إنشاء الهوية.")
+            }
+        }
+    }
+
     fun signIn(password: String) {
         val email = _state.value.email.trim()
         if (email.isBlank() || password.isBlank()) {
@@ -153,8 +182,8 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
         if (snapshot.relatedKind != null) {
             val parentRow = snapshot.rows.getOrNull(snapshot.selectedIndex)
             val parentId = when (snapshot.relatedKind) {
-                RelatedListKind.SUBSCRIBER_NUMBERS, RelatedListKind.SUBSCRIBER_POINTS, RelatedListKind.SUBSCRIBER_HISTORY -> parentRow?.optString("user_id")
-                RelatedListKind.PROTECTION_TASKS, RelatedListKind.PROVIDER_PREFIXES, RelatedListKind.PROVIDER_TARIFFS -> parentRow?.optString("id")
+                RelatedListKind.SUBSCRIBER_NUMBERS, RelatedListKind.SUBSCRIBER_POINTS, RelatedListKind.SUBSCRIBER_HISTORY -> parentRow?.optString("id")
+                RelatedListKind.PROTECTION_TASKS, RelatedListKind.PROVIDER_PREFIXES, RelatedListKind.PROVIDER_TARIFFS, RelatedListKind.SUPPORT_MESSAGES, RelatedListKind.PLAN_TASKS -> parentRow?.optString("id")
             }.orEmpty()
             if (parentId.isBlank()) return
             viewModelScope.launch {
@@ -215,8 +244,8 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
         val current = _state.value
         val parentRow = current.rows.getOrNull(current.selectedIndex)
         val parent = when (kind) {
-            RelatedListKind.SUBSCRIBER_NUMBERS, RelatedListKind.SUBSCRIBER_POINTS, RelatedListKind.SUBSCRIBER_HISTORY -> parentRow?.optString("user_id")
-            RelatedListKind.PROTECTION_TASKS, RelatedListKind.PROVIDER_PREFIXES, RelatedListKind.PROVIDER_TARIFFS -> parentRow?.optString("id")
+            RelatedListKind.SUBSCRIBER_NUMBERS, RelatedListKind.SUBSCRIBER_POINTS, RelatedListKind.SUBSCRIBER_HISTORY -> parentRow?.optString("id")
+            RelatedListKind.PROTECTION_TASKS, RelatedListKind.PROVIDER_PREFIXES, RelatedListKind.PROVIDER_TARIFFS, RelatedListKind.SUPPORT_MESSAGES, RelatedListKind.PLAN_TASKS -> parentRow?.optString("id")
         }.orEmpty()
         if (parent.isBlank()) return
         viewModelScope.launch {
@@ -232,64 +261,77 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
     fun startForm(kind: AdminFormKind, row: JSONObject? = null) {
         if (_state.value.offlineSnapshot) { _state.value = _state.value.copy(error = "لا يمكن تعديل لقطة Offline."); return }
         val current = _state.value
-        val parent = if (kind in setOf(AdminFormKind.PREFIX, AdminFormKind.TARIFF, AdminFormKind.TASK_SETTINGS)) _state.value.rows.getOrNull(_state.value.selectedIndex)?.optString("id") else null
+        val selected = current.rows.getOrNull(current.selectedIndex)
+        val parent = when (kind) {
+            AdminFormKind.PREFIX, AdminFormKind.TARIFF -> row?.optString("telecom_company_id")?.takeIf(String::isNotBlank) ?: selected?.optString("id")
+            AdminFormKind.TASK_SETTINGS -> row?.optString("telecom_company_id")?.takeIf(String::isNotBlank)
+                ?: if (current.section == AdminSection.PROVIDERS) selected?.optString("id") else selected?.optString("telecom_company_id")
+            else -> null
+        }
         val values = when (kind) {
-            AdminFormKind.USER -> mapOf("full_name" to row?.optString("full_name").orEmpty(), "username" to row?.optString("username").orEmpty(),
-                "phone" to row?.optString("phone").orEmpty(), "account_status" to row?.optString("account_status").orEmpty().ifBlank { "active" })
+            AdminFormKind.USER -> mapOf("name" to row?.optString("name").orEmpty(), "email" to row?.optString("email").orEmpty(),
+                "account_type" to row?.optString("account_type").orEmpty(),
+                "account_status" to row?.optString("account_status").orEmpty().ifBlank { "ACTIVE" }, "reason" to "")
             AdminFormKind.PROVIDER -> mapOf("code" to row?.optString("code").orEmpty(), "name" to row?.optString("name").orEmpty(),
-                "short_name" to row?.optString("short_name").orEmpty(), "status" to row?.optString("status").orEmpty().ifBlank { "active" },
-                "operational_settings" to row?.optJSONObject("operational_settings")?.toString().orEmpty())
-            AdminFormKind.PREFIX -> mapOf("provider_id" to (row?.optString("provider_id") ?: parent).orEmpty(), "prefix" to row?.optString("prefix").orEmpty(),
-                "country_code" to row?.optString("country_code").orEmpty(), "number_length" to row?.optInt("number_length")?.takeIf { row.has("number_length") && !row.isNull("number_length") }?.toString().orEmpty(),
-                "status" to row?.optString("status").orEmpty().ifBlank { "active" })
-            AdminFormKind.TARIFF -> mapOf("provider_id" to (row?.optString("telecom_company_id")?.takeIf(String::isNotBlank) ?: row?.optString("provider_id")?.takeIf(String::isNotBlank) ?: parent).orEmpty(),
+                "status" to row?.optString("status").orEmpty().ifBlank { "ACTIVE" })
+            AdminFormKind.PREFIX -> mapOf("telecom_company_id" to (row?.optString("telecom_company_id") ?: parent).orEmpty(), "prefix" to row?.optString("prefix").orEmpty(),
+                "status" to row?.optString("status").orEmpty().ifBlank { "ACTIVE" })
+            AdminFormKind.TARIFF -> mapOf("telecom_company_id" to (row?.optString("telecom_company_id")?.takeIf(String::isNotBlank) ?: parent).orEmpty(),
                 "tariff_mode" to row?.optString("tariff_mode").orEmpty().ifBlank { "MONTHLY" },
                 "duration_unit_days" to row?.optString("duration_unit_days").orEmpty().ifBlank { "30" },
                 "points_per_unit" to row?.optString("points_per_unit").orEmpty(),
                 "rate" to row?.optString("rate").orEmpty(), "currency" to row?.optString("currency").orEmpty(),
                 "effective_from" to row?.optString("effective_from").orEmpty().ifBlank { Instant.now().toString() },
                 "effective_to" to row?.takeIf { it.has("effective_to") && !it.isNull("effective_to") }?.optString("effective_to").orEmpty(),
-                "status" to row?.optString("status").orEmpty().lowercase().ifBlank { "active" })
-            AdminFormKind.PACKAGE -> mapOf("name" to row?.optString("name").orEmpty(), "points_amount" to row?.optInt("points_amount")?.toString().orEmpty(),
-                "price_amount" to row?.optString("price_amount").orEmpty(), "currency" to row?.optString("currency").orEmpty().ifBlank { "SAR" },
-                "display_order" to row?.optInt("display_order")?.toString().orEmpty(), "status" to row?.optString("status").orEmpty().ifBlank { "active" })
+                "status" to row?.optString("status").orEmpty().ifBlank { "ACTIVE" })
+            AdminFormKind.PACKAGE -> mapOf("code" to row?.optString("code").orEmpty(), "name" to row?.optString("name").orEmpty(), "points" to row?.optLong("points")?.toString().orEmpty(),
+                "price" to row?.optString("price").orEmpty(), "currency" to row?.optString("currency").orEmpty().ifBlank { "SAR" },
+                "display_order" to row?.optInt("display_order")?.toString().orEmpty(), "is_visible" to row?.optBoolean("is_visible", true).toString(), "is_active" to row?.optBoolean("is_active", true).toString())
             AdminFormKind.PAYMENT_METHOD -> {
-                val data = row?.optJSONObject("payment_data")
-                mapOf("name" to row?.optString("name").orEmpty(), "method_type" to data?.optString("type").orEmpty(),
-                    "display_order" to data?.optInt("display_order")?.toString().orEmpty(), "payment_data" to data?.toString().orEmpty(),
-                    "instructions" to row?.optString("instructions").orEmpty(), "status" to row?.optString("status").orEmpty().ifBlank { "active" })
+                mapOf("code" to row?.optString("code").orEmpty(), "name" to row?.optString("name").orEmpty(), "type" to row?.optString("type").orEmpty(),
+                    "receiving_account" to row?.optString("receiving_account").orEmpty(), "transfer_instructions" to row?.optString("transfer_instructions").orEmpty(),
+                    "display_order" to row?.optInt("display_order")?.toString().orEmpty(), "is_visible" to row?.optBoolean("is_visible", true).toString(), "is_active" to row?.optBoolean("is_active", true).toString())
             }
             AdminFormKind.TASK_SETTINGS -> {
                 val data = row ?: current.relatedRows.getOrNull(current.relatedSelectedIndex)
-                mapOf("provider_id" to data?.optString("provider_id").orEmpty().ifBlank { parent.orEmpty() },
-                    "interval_days" to data?.optInt("interval_days")?.takeIf { data.has("interval_days") }?.toString().orEmpty(),
-                    "task_amount" to data?.optString("task_amount").orEmpty(), "currency" to data?.optString("currency").orEmpty().ifBlank { "SAR" },
-                    "visibility_days_before" to data?.optInt("visibility_days_before")?.toString().orEmpty(),
-                    "auto_create" to data?.optBoolean("auto_create", true).toString(), "allow_reschedule" to data?.optBoolean("allow_reschedule", false).toString(),
+                mapOf("telecom_company_id" to data?.optString("telecom_company_id").orEmpty().ifBlank { parent.orEmpty() },
+                    "interval_days" to data?.optInt("interval_days")?.takeIf { data.has("interval_days") }?.toString().orEmpty().ifBlank { "30" },
+                    "task_amount" to data?.optString("task_amount").orEmpty().ifBlank { "0" }, "currency" to data?.optString("currency").orEmpty().ifBlank { "SAR" },
+                    "visibility_days_before" to data?.optInt("visibility_days_before")?.takeIf { data.has("visibility_days_before") }?.toString().orEmpty().ifBlank { "5" },
+                    "allow_reschedule" to data?.optBoolean("allow_reschedule", true).toString(),
                     "allow_post_expiry_creation" to data?.optBoolean("allow_post_expiry_creation", false).toString(),
-                    "post_expiry_creation_limit_days" to data?.optString("post_expiry_creation_limit_days").orEmpty())
+                    "post_expiry_grace_days" to data?.optInt("post_expiry_grace_days")?.toString().orEmpty(),
+                    "create_first_task_on_activation" to data?.optBoolean("create_first_task_on_activation", true).toString(),
+                    "create_first_task_on_renewal" to data?.optBoolean("create_first_task_on_renewal", false).toString(),
+                    "effective_from" to data?.optString("effective_from").orEmpty().ifBlank { Instant.now().toString() })
             }
+            AdminFormKind.EXPENSE -> mapOf("expense_type_id" to "", "amount" to "", "currency" to "SAR", "description" to "", "reference" to "")
         }
-        val formId = (if (kind == AdminFormKind.USER && current.section == AdminSection.SUBSCRIBERS) row?.optString("user_id") else row?.optString("id"))
-            ?.takeIf(String::isNotBlank)
-        _state.value = current.copy(formKind = kind, formId = formId, formParentId = parent, formValues = values, error = null)
+        val formId = row?.optString("id")?.takeIf(String::isNotBlank)
+        _state.value = current.copy(formKind = kind, formId = if (kind == AdminFormKind.TASK_SETTINGS) null else formId,
+            formParentId = parent, formValues = values, formOptions = emptyList(), error = null)
+        if (kind == AdminFormKind.EXPENSE) viewModelScope.launch {
+            try { _state.value = _state.value.copy(formOptions = repository.expenseTypes()) }
+            catch (error: Exception) { _state.value = _state.value.copy(error = error.message ?: "تعذر تحميل أنواع المصروف النشطة.") }
+        }
     }
 
     fun updateForm(field: String, value: String) {
         _state.value = _state.value.copy(formValues = _state.value.formValues + (field to value), error = null)
     }
-    fun cancelForm() { _state.value = _state.value.copy(formKind = null, formId = null, formParentId = null, formValues = emptyMap()) }
+    fun cancelForm() { _state.value = _state.value.copy(formKind = null, formId = null, formParentId = null, formValues = emptyMap(), formOptions = emptyList()) }
 
     fun saveForm() {
         val s = _state.value
         val kind = s.formKind ?: return
         if (s.offlineSnapshot) { _state.value = s.copy(error = "لا يمكن حفظ تغييرات دون اتصال."); return }
         val permission = when (kind) {
-            AdminFormKind.USER -> AdminPermissions.USERS_UPDATE
+            AdminFormKind.USER -> if (s.formValues["account_type"] == "SUBSCRIBER") AdminPermissions.CUSTOMERS_UPDATE else AdminPermissions.USERS_UPDATE
             AdminFormKind.PROVIDER, AdminFormKind.PREFIX, AdminFormKind.TARIFF -> AdminPermissions.PROVIDERS_MANAGE
             AdminFormKind.PACKAGE -> AdminPermissions.PACKAGES_MANAGE
             AdminFormKind.PAYMENT_METHOD -> AdminPermissions.PAYMENT_METHODS_MANAGE
             AdminFormKind.TASK_SETTINGS -> AdminPermissions.TASKS_SETTINGS
+            AdminFormKind.EXPENSE -> AdminPermissions.FINANCE_WRITE
         }
         if (!can(permission)) { _state.value = s.copy(error = "لا تملك صلاحية حفظ هذا السجل."); return }
         viewModelScope.launch {
@@ -314,13 +356,15 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
             AdminMutation.EXECUTE_PAYMENT_TASK -> AdminPermissions.TASKS_EXECUTE
             AdminMutation.RESCHEDULE_PAYMENT_TASK -> AdminPermissions.TASKS_RESCHEDULE
             AdminMutation.CANCEL_PAYMENT_TASK -> AdminPermissions.TASKS_CANCEL
-            AdminMutation.SET_SUBSCRIBER_STATUS -> AdminPermissions.SUBSCRIBERS_UPDATE
+            AdminMutation.SET_SUBSCRIBER_STATUS -> if (row.optString("account_type") == "SUBSCRIBER") AdminPermissions.CUSTOMERS_UPDATE else AdminPermissions.USERS_UPDATE
             AdminMutation.SET_CUSTOMER_NUMBER_STATUS -> AdminPermissions.NUMBERS_UPDATE
+            AdminMutation.SEND_SUPPORT_REPLY, AdminMutation.CLOSE_SUPPORT -> AdminPermissions.SUPPORT_READ
             else -> ""
         }
         if (permission.isNotEmpty() && !can(permission)) { _state.value = s.copy(error = "لا تملك صلاحية هذا الإجراء."); return }
         when (action) {
-            AdminMutation.REJECT_PURCHASE, AdminMutation.EXECUTE_PAYMENT_TASK, AdminMutation.CANCEL_PAYMENT_TASK -> if (actionInput.isBlank()) {
+            AdminMutation.REJECT_PURCHASE, AdminMutation.EXECUTE_PAYMENT_TASK, AdminMutation.CANCEL_PAYMENT_TASK,
+            AdminMutation.SEND_SUPPORT_REPLY, AdminMutation.CLOSE_SUPPORT -> if (actionInput.isBlank()) {
                 _state.value = s.copy(error = "أدخل سبب الرفض أو مرجع السداد/الإلغاء المطلوب."); return
             }
             AdminMutation.RESCHEDULE_PAYMENT_TASK -> if (runCatching { Instant.parse(actionInput) }.isFailure) {
@@ -340,6 +384,8 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
                     AdminMutation.CANCEL_PAYMENT_TASK -> "ألغى Backend المهمة وسجل سبب الإلغاء."
                     AdminMutation.SET_SUBSCRIBER_STATUS -> "تغيرت حالة المشترك وسجل Backend التدقيق."
                     AdminMutation.SET_CUSTOMER_NUMBER_STATUS -> "تغيرت حالة علاقة الرقم؛ لا يحرر تطبيق الإدارة رقم الهاتف."
+                    AdminMutation.SEND_SUPPORT_REPLY -> "سُجل الرد من حساب الإدارة داخل المحادثة."
+                    AdminMutation.CLOSE_SUPPORT -> "أغلقت المحادثة وسُجلت العملية."
                     else -> "تم الإجراء."
                 }
                 _state.value = _state.value.copy(busy = false, notice = message)
@@ -368,7 +414,7 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
         viewModelScope.launch {
             try {
                 if (repository.canExportReports()) onAllowed()
-                else _state.value = _state.value.copy(error = "لا تملك صلاحية admin_reports.export.")
+                else _state.value = _state.value.copy(error = "لا تملك صلاحية reports.export.")
             } catch (error: Exception) { _state.value = _state.value.copy(error = error.message ?: "تعذر التحقق من صلاحية التصدير.") }
         }
     }
@@ -393,7 +439,7 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
         val s = _state.value
         if (!can(AdminPermissions.NOTIFICATIONS_SEND)) { _state.value = s.copy(error = "لا تملك صلاحية إرسال الإشعارات."); return }
         if (s.notificationTitle.trim().isEmpty() || s.notificationBody.trim().isEmpty()) { _state.value = s.copy(error = "أدخل عنوان الإشعار ومحتواه."); return }
-        if (s.targetType != "all" && s.targetId.isBlank()) { _state.value = s.copy(error = "اختر مستهدفًا حقيقيًا من نتائج البحث."); return }
+        if (s.targetType in setOf("subscriber", "user") && s.targetId.isBlank()) { _state.value = s.copy(error = "اختر مستهدفًا حقيقيًا من نتائج البحث."); return }
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true, error = null)
             try {

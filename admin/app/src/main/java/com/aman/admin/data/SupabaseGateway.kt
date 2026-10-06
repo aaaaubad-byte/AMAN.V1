@@ -53,6 +53,18 @@ class SupabaseGateway(context: Context) {
         userId
     }
 
+    suspend fun recoverPassword(email: String) = withContext(Dispatchers.IO) {
+        ensureConfigured()
+        if (email.isBlank()) throw ContractException("أدخل البريد الإلكتروني أولًا.")
+        requestRaw("/auth/v1/recover", "POST", JSONObject().put("email", email.trim()).toString(), null)
+    }
+
+    suspend fun registerAuthIdentity(email: String, password: String) = withContext(Dispatchers.IO) {
+        ensureConfigured()
+        if (email.isBlank() || password.length < 6) throw ContractException("أدخل بريدًا صالحًا وكلمة مرور لا تقل عن 6 أحرف.")
+        requestRaw("/auth/v1/signup", "POST", JSONObject().put("email", email.trim()).put("password", password).toString(), null)
+    }
+
     suspend fun isAdmin(): Boolean = withContext(Dispatchers.IO) {
         val response = authenticatedRequest("/rest/v1/rpc/is_admin", "POST", "{}")
         val allowed = response.trim().let { it == "true" || it == "[true]" }

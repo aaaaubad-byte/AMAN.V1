@@ -111,17 +111,23 @@ fun AdminApp(viewModel: AdminViewModel) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when {
             state.checkingSession -> CenterProgress("التحقق من الجلسة…")
-            !state.authenticated -> LoginScreen(state.email, state.busy, state.error, viewModel.configurationMessage,
-                viewModel::updateEmail, viewModel::signIn, viewModel::clearMessages)
+            !state.authenticated -> LoginScreen(state.email, state.busy, state.error, state.notice, viewModel.configurationMessage,
+                viewModel::updateEmail, viewModel::signIn, viewModel::recoverPassword, viewModel::registerAuthIdentity, viewModel::clearMessages)
             else -> AdminShell(state, viewModel)
         }
     }
 }
 
 @Composable
-private fun LoginScreen(email: String, busy: Boolean, error: String?, configMessage: String?, onEmail: (String) -> Unit,
-                       onSignIn: (String) -> Unit, onDismiss: () -> Unit) {
+private fun LoginScreen(email: String, busy: Boolean, error: String?, notice: String?, configMessage: String?, onEmail: (String) -> Unit,
+                       onSignIn: (String) -> Unit, onRecover: () -> Unit, onRegister: (String) -> Unit, onDismiss: () -> Unit) {
     var password by rememberSaveable { mutableStateOf("") }
+    var registrationPassword by rememberSaveable { mutableStateOf("") }
+    var showRegistration by rememberSaveable { mutableStateOf(false) }
+    var showSetup by rememberSaveable { mutableStateOf(false) }
+    if (showSetup) AlertDialog(onDismissRequest = { showSetup = false }, title = { Text("A16 — فحص تهيئة التطبيق") },
+        text = { Text(configMessage ?: "تم إعداد عنوان Supabase والمفتاح العام. بعد تسجيل الدخول يتحقق التطبيق من admin_identity والدور والصلاحيات من Backend.") },
+        confirmButton = { TextButton(onClick = { showSetup = false }) { Text("إغلاق") } })
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 24.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.size(76.dp)) {
@@ -129,6 +135,22 @@ private fun LoginScreen(email: String, busy: Boolean, error: String?, configMess
         }
         Spacer(Modifier.height(18.dp))
         Text("AMAN | أمان", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        if (showRegistration) {
+            Text("A18 — إنشاء الهوية", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
+            OutlinedTextField(value = email, onValueChange = onEmail, modifier = Modifier.fillMaxWidth(), label = { Text("البريد الإلكتروني") },
+                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(value = registrationPassword, onValueChange = { registrationPassword = it }, modifier = Modifier.fillMaxWidth(), label = { Text("كلمة المرور (6 أحرف على الأقل)") },
+                singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+            Text("التسجيل ينشئ هوية Auth فقط. لا ينشئ admin_identity ولا يعيّن دورًا أو صلاحية؛ يحتاج دخول الإدارة إلى تعيين مخوّل.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 12.dp))
+            if (error != null) MessageCard(error, true, onDismiss, Modifier.padding(top = 14.dp))
+            if (notice != null) MessageCard(notice, false, modifier = Modifier.padding(top = 14.dp))
+            Button(onClick = { onRegister(registrationPassword) }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 18.dp).height(52.dp), shape = RoundedCornerShape(14.dp)) {
+                if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary) else Text("إنشاء هوية Auth")
+            }
+            TextButton(onClick = { showRegistration = false; registrationPassword = "" }) { Text("العودة إلى A17") }
+        } else {
         Text("تسجيل دخول الإدارة", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
         OutlinedTextField(value = email, onValueChange = onEmail, modifier = Modifier.fillMaxWidth(), label = { Text("البريد الإلكتروني") },
             singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
@@ -136,6 +158,7 @@ private fun LoginScreen(email: String, busy: Boolean, error: String?, configMess
         OutlinedTextField(value = password, onValueChange = { password = it }, modifier = Modifier.fillMaxWidth(), label = { Text("كلمة المرور") },
             singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
         if (error != null) MessageCard(error, true, onDismiss, Modifier.padding(top = 14.dp))
+        if (notice != null) MessageCard(notice, false, modifier = Modifier.padding(top = 14.dp))
         if (configMessage != null) MessageCard(configMessage, false, modifier = Modifier.padding(top = 14.dp))
         Button(onClick = { onSignIn(password) }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 20.dp).height(52.dp),
             shape = RoundedCornerShape(14.dp)) {
@@ -143,6 +166,12 @@ private fun LoginScreen(email: String, busy: Boolean, error: String?, configMess
         }
         Text("Supabase Auth + تحقق الدور والصلاحيات على Backend/RLS. لا ينشئ التطبيق حسابات إدارة.",
             color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 16.dp))
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            TextButton(onClick = onRecover, enabled = !busy) { Text("A19 — نسيت كلمة المرور؟") }
+            TextButton(onClick = { showRegistration = true }, enabled = !busy) { Text("A18 — طلب إدارة") }
+        }
+        TextButton(onClick = { showSetup = true }) { Text("A16 — فحص التهيئة") }
+        }
     }
 }
 
@@ -198,8 +227,9 @@ private fun HomeScreen(state: AdminUiState, viewModel: AdminViewModel) {
                     repeat(3 - line.size) { Spacer(Modifier.weight(1f)) }
                 }
             }
-            val extra = listOf(AdminSection.TASK_SETTINGS, AdminSection.SEARCH, AdminSection.NOTIFICATIONS, AdminSection.REPORTS, AdminSection.ACCOUNT)
-                .filter { viewModel.hasPermission(it.readPermission) }
+            val extra = listOf(AdminSection.USERS, AdminSection.ACTIVE_NUMBERS, AdminSection.TASK_PLANS, AdminSection.TASK_SETTINGS, AdminSection.COMMUNICATIONS,
+                AdminSection.SEARCH, AdminSection.NOTIFICATIONS, AdminSection.REPORTS, AdminSection.ACCOUNT, AdminSection.ABOUT, AdminSection.SETUP)
+                .filter { section -> viewModel.hasPermission(section.readPermission) || (section == AdminSection.NOTIFICATIONS && viewModel.hasPermission(AdminPermissions.NOTIFICATIONS_SEND)) }
             Text("المزيد", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(vertical = 8.dp))
             extra.chunked(2).forEach { line ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -216,8 +246,9 @@ private fun HomeScreen(state: AdminUiState, viewModel: AdminViewModel) {
             else if (activity.isEmpty() && state.error == null) EmptyState("لا توجد سجلات متاحة ضمن صلاحياتك.")
             else activity.take(8).forEach { row ->
                 val destination = when (row.optString("_aman_source_table")) {
-                    "points_purchase_requests" -> AdminSection.PURCHASES
-                    "payment_tasks" -> AdminSection.PAYMENT_TASKS
+                    "points_purchase" -> AdminSection.PURCHASES
+                    "periodic_task" -> AdminSection.PAYMENT_TASKS
+                    "operation" -> AdminSection.REPORTS
                     else -> AdminSection.REPORTS
                 }
                 CompactRecord(row, false, { viewModel.open(destination) }, AdminSection.HOME, Modifier.padding(bottom = 8.dp))
@@ -261,7 +292,7 @@ private fun RecordSectionScreen(state: AdminUiState, viewModel: AdminViewModel) 
     }
     if (pendingForm && selected != null) AlertDialog(onDismissRequest = { pendingForm = false }, title = { Text("تأكيد تغيير الحالة") },
         text = { Text("سيُرسل التغيير إلى Backend ويُسجل ضمن سجل التدقيق. هل تريد المتابعة؟") },
-        confirmButton = { TextButton(onClick = { viewModel.run(if (state.section == AdminSection.SUBSCRIBERS) AdminMutation.SET_SUBSCRIBER_STATUS else AdminMutation.SET_CUSTOMER_NUMBER_STATUS, actionInput); pendingForm = false }) { Text("تأكيد") } },
+        confirmButton = { TextButton(onClick = { viewModel.run(if (state.section in setOf(AdminSection.SUBSCRIBERS, AdminSection.USERS)) AdminMutation.SET_SUBSCRIBER_STATUS else AdminMutation.SET_CUSTOMER_NUMBER_STATUS, actionInput); pendingForm = false }) { Text("تأكيد") } },
         dismissButton = { TextButton(onClick = { pendingForm = false }) { Text("إلغاء") } })
     if (confirmLogout) AlertDialog(onDismissRequest = { confirmLogout = false }, title = { Text("تسجيل الخروج") }, text = { Text("سيُنهي التطبيق الجلسة ويمسح اللقطات المحلية المشفرة.") },
         confirmButton = { TextButton(onClick = { confirmLogout = false; viewModel.signOut() }) { Text("خروج") } }, dismissButton = { TextButton(onClick = { confirmLogout = false }) { Text("إلغاء") } })
@@ -277,10 +308,11 @@ private fun RecordSectionScreen(state: AdminUiState, viewModel: AdminViewModel) 
             if (state.section == AdminSection.SEARCH && state.relatedKind == null) SearchTypeFilters(state.filterStatus, viewModel::setFilterStatus)
             else if (state.relatedKind != null) Unit
             else if (state.section in setOf(AdminSection.SUBSCRIBERS, AdminSection.USERS, AdminSection.ADDED_NUMBERS, AdminSection.ACTIVE_NUMBERS,
-                    AdminSection.PURCHASES, AdminSection.PAYMENT_TASKS, AdminSection.PROVIDERS, AdminSection.PACKAGES, AdminSection.PAYMENT_METHODS)) {
+                    AdminSection.PURCHASES, AdminSection.PAYMENT_TASKS, AdminSection.PERIODIC_PAYMENT, AdminSection.TASK_PLANS,
+                    AdminSection.PROVIDERS, AdminSection.PACKAGES, AdminSection.PAYMENT_METHODS, AdminSection.COMMUNICATIONS, AdminSection.NOTIFICATIONS)) {
                 StatusFilters(state.filterStatus, state.section, viewModel::setFilterStatus)
             }
-            if (state.section == AdminSection.PAYMENT_TASKS && state.relatedKind == null) PaymentTaskFilters(state, viewModel)
+            if (state.section in setOf(AdminSection.PAYMENT_TASKS, AdminSection.PERIODIC_PAYMENT) && state.relatedKind == null) PaymentTaskFilters(state, viewModel)
         }
         if (state.section == AdminSection.REPORTS) {
             ReportControls(state, viewModel, export = { viewModel.checkExportPermission { reportLauncher.launch("aman-${state.reportTypeId}.csv") } })
@@ -307,13 +339,21 @@ private fun RecordSectionScreen(state: AdminUiState, viewModel: AdminViewModel) 
                 AdminSection.PROVIDERS -> viewModel.can(AdminPermissions.PROVIDERS_MANAGE)
                 AdminSection.PACKAGES -> viewModel.can(AdminPermissions.PACKAGES_MANAGE)
                 AdminSection.PAYMENT_METHODS -> viewModel.can(AdminPermissions.PAYMENT_METHODS_MANAGE)
+                AdminSection.FINANCE -> viewModel.can(AdminPermissions.FINANCE_WRITE)
+                AdminSection.TASK_SETTINGS -> viewModel.can(AdminPermissions.TASKS_SETTINGS) && state.rows.getOrNull(state.selectedIndex)?.optString("telecom_company_id").orEmpty().isNotBlank()
                 else -> false
             }
-            if (canAdd && state.relatedKind == null && state.formKind == null) TextButton(onClick = { viewModel.startForm(when (state.section) {
-                AdminSection.PROVIDERS -> AdminFormKind.PROVIDER
-                AdminSection.PACKAGES -> AdminFormKind.PACKAGE
-                else -> AdminFormKind.PAYMENT_METHOD
-            }) }) { Text("إضافة") }
+            if (canAdd && state.relatedKind == null && state.formKind == null) TextButton(onClick = {
+                val kind = when (state.section) {
+                    AdminSection.PROVIDERS -> AdminFormKind.PROVIDER
+                    AdminSection.PACKAGES -> AdminFormKind.PACKAGE
+                    AdminSection.TASK_SETTINGS -> AdminFormKind.TASK_SETTINGS
+                    AdminSection.FINANCE -> AdminFormKind.EXPENSE
+                    else -> AdminFormKind.PAYMENT_METHOD
+                }
+                val row = state.rows.getOrNull(state.selectedIndex).takeIf { state.section != AdminSection.FINANCE }
+                viewModel.startForm(kind, row)
+            }) { Text(if (state.section == AdminSection.FINANCE) "تسجيل مصروف" else if (state.section == AdminSection.TASK_SETTINGS) "إضافة إصدار إعداد" else "إضافة") }
             if (state.relatedKind != null) TextButton(onClick = viewModel::closeRelated) { Text("العودة للقائمة") }
         }
         when {
@@ -350,7 +390,9 @@ private fun SelectedPanel(state: AdminUiState, viewModel: AdminViewModel, row: J
                 if (state.relatedKind != null && relatedRow != null) {
                     Text("${state.relatedKind.title}: ${recordTitle(section, relatedRow)}", color = MaterialTheme.colorScheme.primary,
                         style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
-                    DisplayFields(if (state.relatedKind == RelatedListKind.PROVIDER_PREFIXES) AdminSection.PROVIDERS else if (state.relatedKind == RelatedListKind.PROVIDER_TARIFFS) AdminSection.PROVIDERS else section, relatedRow)
+                    if (state.relatedKind == RelatedListKind.SUPPORT_MESSAGES) {
+                        FieldLine("المرسل", relatedRow.optString("sender_type")); FieldLine("الرسالة", relatedRow.optString("body")); FieldLine("التاريخ", relatedRow.optString("sent_at"))
+                    } else DisplayFields(if (state.relatedKind in setOf(RelatedListKind.PROVIDER_PREFIXES, RelatedListKind.PROVIDER_TARIFFS)) AdminSection.PROVIDERS else section, relatedRow)
                 }
                 val canMutate = !state.offlineSnapshot && !state.busy
                 val phone = row.optString("phone_e164").ifBlank { row.optString("normalized_phone") }
@@ -360,29 +402,37 @@ private fun SelectedPanel(state: AdminUiState, viewModel: AdminViewModel, row: J
                 when (section) {
                     AdminSection.SUBSCRIBERS -> {
                         RelatedButtons(listOf(RelatedListKind.SUBSCRIBER_NUMBERS, RelatedListKind.SUBSCRIBER_POINTS, RelatedListKind.SUBSCRIBER_HISTORY), viewModel)
-                        if (viewModel.can(AdminPermissions.USERS_UPDATE)) OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.USER, row) }, enabled = canMutate) { Text("تعديل الملف") }
-                        if (viewModel.can(AdminPermissions.SUBSCRIBERS_UPDATE)) OutlinedButton(onClick = { onStatusRequest(if (row.optString("status") == "active") "inactive" else "active") }, enabled = canMutate) { Text(if (row.optString("status") == "active") "إيقاف الاشتراك" else "إعادة التفعيل") }
+                        if (viewModel.can(AdminPermissions.SUBSCRIBERS_UPDATE)) OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.USER, row) }, enabled = canMutate) { Text("تعديل الملف") }
+                        if (viewModel.can(AdminPermissions.SUBSCRIBERS_UPDATE)) OutlinedButton(onClick = { onStatusRequest(if (row.optString("account_status").equals("active", true)) "SUSPENDED" else "ACTIVE") }, enabled = canMutate) { Text(if (row.optString("account_status").equals("active", true)) "إيقاف الحساب" else "إعادة التفعيل") }
                     }
-                    AdminSection.USERS -> if (viewModel.can(AdminPermissions.USERS_UPDATE)) OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.USER, row) }, enabled = canMutate) { Text("تعديل الملف والحالة") }
+                    AdminSection.USERS -> if (viewModel.can(AdminPermissions.USERS_UPDATE)) {
+                        OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.USER, row) }, enabled = canMutate) { Text("تعديل الملف والحالة") }
+                        OutlinedButton(onClick = { onStatusRequest(if (row.optString("account_status").equals("active", true)) "SUSPENDED" else "ACTIVE") }, enabled = canMutate) { Text(if (row.optString("account_status").equals("active", true)) "إيقاف الحساب" else "إعادة التفعيل") }
+                    }
                     AdminSection.ADDED_NUMBERS -> {
                         Text("إدارة الأرقام هنا للعرض والنسخ والأرشفة/الحالة فقط؛ لا يستطيع المسؤول تعديل رقم الهاتف.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         if (viewModel.can(AdminPermissions.NUMBERS_UPDATE)) Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            listOf("active" to "تفعيل", "inactive" to "تعطيل", "archived" to "أرشفة").forEach { (status, label) ->
-                                if (row.optString("status") != status) OutlinedButton(onClick = { onStatusRequest(status) }, enabled = canMutate) { Text(label) }
+                            listOf("ACTIVE" to "تفعيل", "INACTIVE" to "تعطيل", "ARCHIVED" to "أرشفة").forEach { (status, label) ->
+                                if (!row.optString("status").equals(status, true)) OutlinedButton(onClick = { onStatusRequest(status) }, enabled = canMutate) { Text(label) }
                             }
                         }
                     }
                     AdminSection.ACTIVE_NUMBERS -> RelatedButtons(listOf(RelatedListKind.PROTECTION_TASKS), viewModel)
-                    AdminSection.PURCHASES -> if (row.optString("status") == "pending") Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AdminSection.PURCHASES -> if (row.optString("status").equals("PENDING", true)) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (viewModel.can(AdminPermissions.PURCHASES_APPROVE)) Button(onClick = { onActionRequest(AdminMutation.APPROVE_PURCHASE, "") }, enabled = canMutate) { Icon(Icons.Outlined.CheckCircle, null); Text("اعتماد", Modifier.padding(start = 5.dp)) }
                         if (viewModel.can(AdminPermissions.PURCHASES_REJECT)) OutlinedButton(onClick = { onActionRequest(AdminMutation.REJECT_PURCHASE, "") }, enabled = canMutate) { Text("رفض مع سبب") }
                     }
-                    AdminSection.PAYMENT_TASKS -> if (row.optString("status") == "open") {
+                    AdminSection.PAYMENT_TASKS, AdminSection.PERIODIC_PAYMENT -> if (row.optString("status").equals("OPEN", true)) {
                         if (viewModel.can(AdminPermissions.TASKS_EXECUTE)) OutlinedButton(onClick = { onActionRequest(AdminMutation.EXECUTE_PAYMENT_TASK, "") }, enabled = canMutate) { Text("تسجيل السداد الخارجي") }
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             if (viewModel.can(AdminPermissions.TASKS_RESCHEDULE)) OutlinedButton(onClick = { onActionRequest(AdminMutation.RESCHEDULE_PAYMENT_TASK, "") }, enabled = canMutate) { Text("إعادة جدولة") }
                             if (viewModel.can(AdminPermissions.TASKS_CANCEL)) OutlinedButton(onClick = { onActionRequest(AdminMutation.CANCEL_PAYMENT_TASK, "") }, enabled = canMutate) { Text("إلغاء بسبب") }
                         }
+                    }
+                    AdminSection.TASK_PLANS -> {
+                        RelatedButtons(listOf(RelatedListKind.PLAN_TASKS), viewModel)
+                        Text("عرض خطط وإصدارات التشغيل التاريخية فقط. لا يعيد التطبيق بناء الخطط أو تغيير المهام التابعة.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     AdminSection.PROVIDERS -> {
                         if (viewModel.can(AdminPermissions.PROVIDERS_MANAGE)) {
@@ -392,7 +442,7 @@ private fun SelectedPanel(state: AdminUiState, viewModel: AdminViewModel, row: J
                                 OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.PREFIX) }, enabled = canMutate) { Text("إضافة بادئة") }
                                 OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.TARIFF) }, enabled = canMutate) { Text("إضافة تعرفة") }
                             }
-                            OutlinedButton(onClick = { viewModel.open(AdminSection.TASK_SETTINGS) }, enabled = canMutate) { Text("فتح A11") }
+                            OutlinedButton(onClick = { viewModel.open(AdminSection.TASK_SETTINGS) }, enabled = canMutate) { Text("فتح إعدادات مهام A05") }
                             OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.TASK_SETTINGS, row.optJSONObject("task_settings")) }, enabled = canMutate && viewModel.can(AdminPermissions.TASKS_SETTINGS)) { Text("تعديل/إنشاء إعدادات الشركة") }
                         }
                         val child = state.relatedRows.getOrNull(state.relatedSelectedIndex)
@@ -402,7 +452,15 @@ private fun SelectedPanel(state: AdminUiState, viewModel: AdminViewModel, row: J
                     }
                     AdminSection.PACKAGES -> if (viewModel.can(AdminPermissions.PACKAGES_MANAGE)) OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.PACKAGE, row) }, enabled = canMutate) { Text("تعديل / إظهار / إخفاء") }
                     AdminSection.PAYMENT_METHODS -> if (viewModel.can(AdminPermissions.PAYMENT_METHODS_MANAGE)) OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.PAYMENT_METHOD, row) }, enabled = canMutate) { Text("تعديل / إظهار / إخفاء") }
-                    AdminSection.TASK_SETTINGS -> if (viewModel.can(AdminPermissions.TASKS_SETTINGS)) OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.TASK_SETTINGS, row) }, enabled = canMutate) { Text("تعديل إعدادات المهام") }
+                    AdminSection.TASK_SETTINGS -> if (viewModel.can(AdminPermissions.TASKS_SETTINGS)) OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.TASK_SETTINGS, row) }, enabled = canMutate) { Text("إضافة إصدار إعدادات مهام") }
+                    AdminSection.COMMUNICATIONS -> {
+                        RelatedButtons(listOf(RelatedListKind.SUPPORT_MESSAGES), viewModel)
+                        if (row.optString("status").equals("OPEN", true) && viewModel.can(AdminPermissions.SUPPORT_READ)) {
+                            OutlinedButton(onClick = { onActionRequest(AdminMutation.SEND_SUPPORT_REPLY, "") }, enabled = canMutate) { Text("الرد على المحادثة") }
+                            OutlinedButton(onClick = { onActionRequest(AdminMutation.CLOSE_SUPPORT, "تم الإغلاق من الإدارة") }, enabled = canMutate) { Text("إغلاق المحادثة") }
+                        }
+                    }
+                    AdminSection.FINANCE -> if (viewModel.can(AdminPermissions.FINANCE_WRITE)) OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.EXPENSE) }, enabled = canMutate) { Text("تسجيل مصروف") }
                     AdminSection.ACCOUNT -> OutlinedButton(onClick = onLogout, enabled = canMutate) { Icon(Icons.AutoMirrored.Outlined.Logout, null); Text("تسجيل الخروج", Modifier.padding(start = 6.dp)) }
                     else -> Unit
                 }
@@ -430,8 +488,12 @@ private fun RelatedToolbar(state: AdminUiState, viewModel: AdminViewModel) {
 private fun AdminFormPanel(state: AdminUiState, viewModel: AdminViewModel) {
     val kind = state.formKind ?: return
     var confirmSave by remember(state.formKind, state.formId) { mutableStateOf(false) }
-    if (confirmSave) AlertDialog(onDismissRequest = { confirmSave = false }, title = { Text("تأكيد تغيير إعدادات التشغيل") },
-        text = { Text(if (kind == AdminFormKind.TASK_SETTINGS) "قد يغيّر هذا إعدادات المهام للشركة. لا نفترض إعادة بناء الخطط الحالية أو المستقبلية؛ GAP-DB-016 مفتوح. هل تريد حفظ الإعداد فقط؟" else "سيُحفظ التغيير عبر RPC مدقق وقد يؤثر في حل البادئات/التعرفة للعمليات المستقبلية. اللقطات التاريخية لا يعاد احتسابها.") },
+    if (confirmSave) AlertDialog(onDismissRequest = { confirmSave = false }, title = { Text(if (kind == AdminFormKind.EXPENSE) "تأكيد ترحيل مصروف" else "تأكيد حفظ إعداد الإدارة") },
+        text = { Text(when (kind) {
+            AdminFormKind.TASK_SETTINGS -> "سيُضاف إصدار إعداد جديد للشركة دون إعادة بناء المهام أو الخطط السابقة. تحقق من بيانات الإصدار والسريان قبل المتابعة."
+            AdminFormKind.EXPENSE -> "سيُسجل مصروف بقيمة ${state.formValues["amount"].orEmpty()} ${state.formValues["currency"].orEmpty()}، الوصف: ${state.formValues["description"].orEmpty()}، المرجع: ${state.formValues["reference"].orEmpty()}. العملية append-only وتؤثر في الرصيد الدفتري."
+            else -> "سيُحفظ التغيير عبر RPC مدقق وقد يؤثر في حل البادئات/التعرفة للعمليات المستقبلية. اللقطات التاريخية لا يعاد احتسابها."
+        }) },
         confirmButton = { TextButton(onClick = { confirmSave = false; viewModel.saveForm() }, enabled = !state.busy) { Text("تأكيد الحفظ") } },
         dismissButton = { TextButton(onClick = { confirmSave = false }) { Text("إلغاء") } })
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), shape = PanelShape,
@@ -440,12 +502,23 @@ private fun AdminFormPanel(state: AdminUiState, viewModel: AdminViewModel) {
             Text(if (state.formId == null) "إضافة ${formTitle(kind)}" else "تعديل ${formTitle(kind)}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text(formContractNote(kind), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             formFields(kind).forEach { (key, label, keyboard) ->
-                if (key in setOf("status", "account_status", "auto_create", "allow_reschedule", "allow_post_expiry_creation", "tariff_mode")) {
+                if (key == "expense_type_id" && kind == AdminFormKind.EXPENSE) {
+                    Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (state.formOptions.isEmpty()) Text("لا توجد أنواع مصروف نشطة أو لا تتوفر صلاحية قراءتها.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        state.formOptions.forEach { option ->
+                            val id = option.optString("id")
+                            OutlinedButton(onClick = { viewModel.updateForm("expense_type_id", id) }) {
+                                Text(if (state.formValues[key] == id) "✓ ${option.optString("name")}" else option.optString("name"))
+                            }
+                        }
+                    }
+                } else if (key in setOf("status", "account_status", "allow_reschedule", "allow_post_expiry_creation", "create_first_task_on_activation", "create_first_task_on_renewal", "is_visible", "is_active", "tariff_mode")) {
                     val options = when (key) {
-                        "auto_create", "allow_reschedule", "allow_post_expiry_creation" -> listOf("true", "false")
-                        "account_status" -> listOf("active", "suspended", "banned")
+                        "allow_reschedule", "allow_post_expiry_creation", "create_first_task_on_activation", "create_first_task_on_renewal", "is_visible", "is_active" -> listOf("true", "false")
+                        "account_status" -> listOf("ACTIVE", "SUSPENDED", "DISABLED")
                         "tariff_mode" -> listOf("DAILY", "WEEKLY", "MONTHLY", "YEARLY")
-                        else -> listOf("active", "inactive", "archived")
+                        else -> if (kind == AdminFormKind.USER) listOf("ACTIVE", "SUSPENDED", "DISABLED") else listOf("ACTIVE", "INACTIVE", "ARCHIVED").let { if (kind in setOf(AdminFormKind.PROVIDER, AdminFormKind.PREFIX, AdminFormKind.TARIFF)) it.take(2) else it }
                     }
                     Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { options.forEach { option ->
@@ -454,10 +527,10 @@ private fun AdminFormPanel(state: AdminUiState, viewModel: AdminViewModel) {
                     } }
                 } else OutlinedTextField(value = state.formValues[key].orEmpty(), onValueChange = { viewModel.updateForm(key, it) },
                     modifier = Modifier.fillMaxWidth(), label = { Text(label) }, keyboardOptions = KeyboardOptions(keyboardType = keyboard),
-                    singleLine = key !in setOf("operational_settings", "payment_data", "instructions"), minLines = if (key in setOf("operational_settings", "payment_data", "instructions")) 2 else 1)
+                    singleLine = key !in setOf("transfer_instructions", "description", "reason", "reference"), minLines = if (key in setOf("transfer_instructions", "description", "reason", "reference")) 2 else 1)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { if (kind in setOf(AdminFormKind.TASK_SETTINGS, AdminFormKind.PROVIDER, AdminFormKind.PREFIX, AdminFormKind.TARIFF)) confirmSave = true else viewModel.saveForm() }, enabled = !state.busy) { if (state.busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text("حفظ عبر Backend") }
+                Button(onClick = { if (kind in setOf(AdminFormKind.TASK_SETTINGS, AdminFormKind.PROVIDER, AdminFormKind.PREFIX, AdminFormKind.TARIFF, AdminFormKind.EXPENSE)) confirmSave = true else viewModel.saveForm() }, enabled = !state.busy) { if (state.busy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Text(if (kind == AdminFormKind.EXPENSE) "ترحيل المصروف" else "حفظ عبر Backend") }
                 OutlinedButton(onClick = viewModel::cancelForm, enabled = !state.busy) { Text("إلغاء") }
             }
         }
@@ -468,17 +541,17 @@ private fun AdminFormPanel(state: AdminUiState, viewModel: AdminViewModel) {
 private fun NotificationComposer(state: AdminUiState, viewModel: AdminViewModel) {
     var confirmSend by remember { mutableStateOf(false) }
     if (confirmSend) AlertDialog(onDismissRequest = { confirmSend = false }, title = { Text("تأكيد إرسال الإشعار") },
-        text = { Text("سيُرسل الإشعار إلى ${if (state.targetType == "all") "جميع المستخدمين النشطين" else "${state.targetName} (${if (state.targetType == "subscriber") "مشترك" else "مستخدم"})"}، ولن يمكن سحبه بعد الإرسال. معاينة: ${state.notificationTitle.trim()} — ${state.notificationBody.trim()}") },
+        text = { Text("سيُرسل الإشعار إلى ${when (state.targetType) { "all" -> "جميع الحسابات النشطة"; "all_subscribers" -> "جميع المشتركين النشطين"; else -> "${state.targetName} (${if (state.targetType == "subscriber") "مشترك" else "مستخدم"})" }}، ولن يمكن سحبه بعد الإرسال. معاينة: ${state.notificationTitle.trim()} — ${state.notificationBody.trim()}") },
         confirmButton = { TextButton(onClick = { confirmSend = false; viewModel.sendNotification() }, enabled = !state.busy) { Text("إرسال") } },
         dismissButton = { TextButton(onClick = { confirmSend = false }) { Text("إلغاء") } })
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
         Card(shape = PanelShape, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("إنشاء إشعار إداري", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("all" to "عام", "subscriber" to "مشترك", "user" to "مستخدم").forEach { (id, label) ->
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("all" to "عام", "all_subscribers" to "كل المشتركين", "subscriber" to "مشترك محدد", "user" to "مستخدم محدد").forEach { (id, label) ->
                     OutlinedButton(onClick = { viewModel.setTargetType(id) }, enabled = !state.busy) { Text(if (state.targetType == id) "✓ $label" else label) }
                 } }
-                if (state.targetType != "all") {
+                if (state.targetType in setOf("subscriber", "user")) {
                     OutlinedTextField(value = state.targetQuery, onValueChange = viewModel::updateTargetQuery, modifier = Modifier.fillMaxWidth(), label = { Text("ابحث عن المستهدف بالاسم/المعرف") }, singleLine = true)
                     if (state.targetName.isNotBlank()) Text("المستهدف: ${state.targetName} (${state.targetId})", style = MaterialTheme.typography.bodySmall)
                     state.targetRows.take(4).forEach { target -> TextButton(onClick = { viewModel.selectTarget(target) }) { Text("${target.optString("_recipient_name").ifBlank { target.optString("email") }} · ${target.optString("_recipient_id")}") } }
@@ -540,8 +613,9 @@ private fun AccountPanel(state: AdminUiState, viewModel: AdminViewModel, onLogou
 
 @Composable
 private fun StatusFilters(selected: String, section: AdminSection, onSelect: (String) -> Unit) {
-    val statuses = if (section == AdminSection.USERS) listOf("" to "الكل", "active" to "نشط", "suspended" to "موقوف", "banned" to "محظور") else
-        listOf("" to "الكل", "pending" to "قيد المراجعة", "open" to "مفتوحة", "active" to "نشط", "inactive" to "غير نشط", "archived" to "مؤرشف", "approved" to "معتمد", "rejected" to "مرفوض", "completed" to "مكتمل", "cancelled" to "ملغى")
+    val statuses = if (section in setOf(AdminSection.USERS, AdminSection.SUBSCRIBERS)) listOf("" to "الكل", "ACTIVE" to "نشط", "SUSPENDED" to "موقوف", "DISABLED" to "معطل") else if (section in setOf(AdminSection.PACKAGES, AdminSection.PAYMENT_METHODS))
+        listOf("" to "الكل", "ACTIVE" to "مفعّل", "INACTIVE" to "معطل", "VISIBLE" to "مرئي", "HIDDEN" to "مخفي") else
+        listOf("" to "الكل", "PENDING" to "قيد المراجعة", "OPEN" to "مفتوحة", "ACTIVE" to "نشط", "INACTIVE" to "غير نشط", "ARCHIVED" to "مؤرشف", "APPROVED" to "معتمد", "REJECTED" to "مرفوض", "COMPLETED" to "مكتمل", "CANCELLED" to "ملغى", "EXPIRED" to "منتهية")
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         statuses.forEach { (value, label) ->
             OutlinedButton(onClick = { onSelect(value) }) { Text(if (selected == value) "✓ $label" else label, maxLines = 1) }
@@ -551,9 +625,9 @@ private fun StatusFilters(selected: String, section: AdminSection, onSelect: (St
 
 @Composable
 private fun SearchTypeFilters(selected: String, onSelect: (String) -> Unit) {
-    val types = listOf("" to "الكل", "profiles" to "المستخدمون", "phone_numbers" to "الأرقام", "points_purchase_requests" to "طلبات الشراء",
-        "telecom_providers" to "الشركات", "operations" to "العمليات", "payment_tasks" to "المهام", "admin_notifications" to "الإشعارات",
-        "points_packages" to "الباقات", "payment_methods" to "وسائل الدفع", "task_settings" to "إعدادات التشغيل")
+    val types = listOf("" to "الكل", "customer_profile" to "المستخدمون والعملاء", "phone_number" to "الأرقام", "points_purchase" to "طلبات الشراء",
+        "telecom_company" to "الشركات", "operation" to "العمليات", "periodic_task" to "المهام", "admin_notification_campaign" to "الإشعارات",
+        "points_package" to "الباقات", "payment_method" to "وسائل الدفع", "task_configuration" to "إعدادات التشغيل")
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         types.forEach { (value, label) -> OutlinedButton(onClick = { onSelect(value) }) { Text(if (selected == value) "✓ $label" else label, maxLines = 1) } }
     }
@@ -575,21 +649,25 @@ private fun PaymentTaskFilters(state: AdminUiState, viewModel: AdminViewModel) {
 @Composable
 private fun DisplayFields(section: AdminSection, row: JSONObject) {
     val keys = when (section) {
-        AdminSection.SUBSCRIBERS -> listOf("full_name", "username", "phone", "email", "status", "balance_points", "number_count", "protection_count", "became_subscriber_at")
-        AdminSection.USERS -> listOf("full_name", "username", "phone", "email", "account_status", "subscriber_status", "balance_points", "created_at")
-        AdminSection.ADDED_NUMBERS -> listOf("phone_e164", "provider_name", "customer_name", "status", "added_at")
-        AdminSection.ACTIVE_NUMBERS -> listOf("phone_e164", "customer_name", "provider_name", "status", "started_at", "expires_at", "duration_days", "tariff_duration_unit_days", "tariff_points_per_unit", "total_points_snapshot", "remaining_days", "task_plan_interval_days", "next_task_due", "next_task_status", "following_task_due")
-        AdminSection.PURCHASES -> listOf("request_number", "customer_name", "package_name", "points_amount_snapshot", "price_amount_snapshot", "currency_snapshot", "payment_method_name_snapshot", "payment_method_details", "payment_reference", "submitted_at", "status", "rejection_reason")
-        AdminSection.PAYMENT_TASKS -> listOf("phone_e164", "customer_name", "provider_name", "task_type", "due_at", "amount_snapshot", "currency_snapshot", "task_attention", "status", "external_payment_reference")
+        AdminSection.SUBSCRIBERS, AdminSection.USERS -> listOf("name", "email", "public_user_code", "account_type", "account_status", "balance_points", "number_count", "protection_count", "public_subscriber_code", "activated_at", "created_at")
+        AdminSection.ADDED_NUMBERS -> listOf("display_phone", "provider_name", "customer_name", "public_added_number_code", "status", "added_at")
+        AdminSection.ACTIVE_NUMBERS -> listOf("phone_e164", "customer_name", "provider_name", "status", "start_at", "end_at", "duration_unit_days_snapshot", "points_per_unit_snapshot", "units_snapshot", "points_cost_snapshot", "remaining_days")
+        AdminSection.PURCHASES -> listOf("public_purchase_code", "customer_name", "package_name_snapshot", "points_snapshot", "price_snapshot", "currency_snapshot", "payment_method_name_snapshot", "payment_method_details_snapshot", "transfer_reference", "submitted_at", "status", "rejection_reason")
+        AdminSection.PAYMENT_TASKS, AdminSection.PERIODIC_PAYMENT -> listOf("public_task_code", "phone_e164", "customer_name", "company_snapshot", "due_at", "amount", "currency", "task_attention", "status", "execution_reference")
+        AdminSection.TASK_PLANS -> listOf("protection_period_id", "task_configuration_id", "status", "anchor_at", "version", "created_at", "updated_at")
         AdminSection.PROVIDERS -> when {
-            row.has("prefix") -> listOf("prefix", "country_code", "number_length", "status")
+            row.has("prefix") -> listOf("prefix", "status", "created_at")
             row.has("effective_from") -> listOf("tariff_mode", "duration_unit_days", "points_per_unit", "rate", "currency", "effective_from", "effective_to", "status")
-            else -> listOf("name", "country_code", "code", "status", "prefix_count", "operational_settings")
+            else -> listOf("name", "code", "status", "prefix_count")
         }
-        AdminSection.PACKAGES -> listOf("name", "points_amount", "price_amount", "currency", "display_order", "status")
-        AdminSection.PAYMENT_METHODS -> listOf("name", "payment_data", "instructions", "status")
-        AdminSection.TASK_SETTINGS -> listOf("provider_name", "interval_days", "task_amount", "currency", "visibility_days_before", "auto_create", "allow_reschedule", "allow_post_expiry_creation", "post_expiry_creation_limit_days")
-        AdminSection.NOTIFICATIONS -> listOf("target_type", "target_id", "title", "body", "status", "recipient_count", "sent_at")
+        AdminSection.PACKAGES -> listOf("code", "name", "points", "price", "currency", "display_order", "is_visible", "is_active")
+        AdminSection.PAYMENT_METHODS -> listOf("code", "name", "type", "receiving_account", "transfer_instructions", "display_order", "is_visible", "is_active")
+        AdminSection.TASK_SETTINGS -> listOf("provider_name", "interval_days", "task_amount", "currency", "visibility_days_before", "allow_reschedule", "allow_post_expiry_creation", "post_expiry_grace_days", "create_first_task_on_activation", "create_first_task_on_renewal", "effective_from", "effective_to")
+        AdminSection.FINANCE -> listOf("entry_type", "direction", "amount", "currency", "description", "source_type", "source_id", "created_at")
+        AdminSection.COMMUNICATIONS -> listOf("subject", "customer_name", "status", "created_at", "updated_at")
+        AdminSection.ABOUT -> listOf("content_key", "version", "status", "title", "body")
+        AdminSection.SETUP -> listOf("enabled", "customer_message", "updated_by", "updated_at")
+        AdminSection.NOTIFICATIONS -> listOf("target_type", "target_definition", "title", "body", "status", "recipient_count", "sent_at")
         else -> listOf("_record_type", "id", "status", "created_at")
     }
     keys.forEach { key ->
@@ -714,6 +792,8 @@ private fun actionTitle(action: AdminMutation) = when (action) {
     AdminMutation.EXECUTE_PAYMENT_TASK -> "تسجيل سداد تم خارجيًا"
     AdminMutation.RESCHEDULE_PAYMENT_TASK -> "إعادة جدولة المهمة"
     AdminMutation.CANCEL_PAYMENT_TASK -> "إلغاء المهمة"
+    AdminMutation.SEND_SUPPORT_REPLY -> "إرسال رد الدعم"
+    AdminMutation.CLOSE_SUPPORT -> "إغلاق محادثة الدعم"
     else -> "تأكيد الإجراء"
 }
 private fun actionInputLabel(action: AdminMutation) = when (action) {
@@ -721,6 +801,8 @@ private fun actionInputLabel(action: AdminMutation) = when (action) {
     AdminMutation.EXECUTE_PAYMENT_TASK -> "مرجع السداد الخارجي"
     AdminMutation.RESCHEDULE_PAYMENT_TASK -> "الموعد الجديد ISO-8601 (مثال 2026-10-04T12:00:00Z)"
     AdminMutation.CANCEL_PAYMENT_TASK -> "سبب الإلغاء"
+    AdminMutation.SEND_SUPPORT_REPLY -> "نص الرد"
+    AdminMutation.CLOSE_SUPPORT -> "سبب الإغلاق"
     else -> "البيانات المطلوبة"
 }
 private fun actionExplanation(action: AdminMutation, row: JSONObject?) = when (action) {
@@ -729,35 +811,40 @@ private fun actionExplanation(action: AdminMutation, row: JSONObject?) = when (a
     AdminMutation.EXECUTE_PAYMENT_TASK -> "نفّذ السداد عبر القناة الخارجية الرسمية أولًا. التطبيق لا يحول أموالًا؛ يسجل فقط نتيجة السداد ومرجعه."
     AdminMutation.RESCHEDULE_PAYMENT_TASK -> "يجب أن يكون الموعد مستقبلًا وضمن فترة الحماية. لا نفترض إعادة بناء خطة المهام؛ GAP-DB-016 ما زال مفتوحًا."
     AdminMutation.CANCEL_PAYMENT_TASK -> "سيُلغي Backend المهمة المفتوحة ويسجل سبب الإلغاء والتدقيق."
+    AdminMutation.SEND_SUPPORT_REPLY -> "سيظهر الرد للعميل في سجل المحادثة باسم حساب الإدارة المسجل."
+    AdminMutation.CLOSE_SUPPORT -> "سيغلق Backend المحادثة المفتوحة مع حفظ السبب والتدقيق."
     else -> "سيتحقق Backend من الصلاحيات والحالة ويسجل الأثر."
 }
 private fun actionInput(action: AdminMutation): String = actionInputLabel(action)
 private fun formTitle(kind: AdminFormKind) = when (kind) {
     AdminFormKind.USER -> "الملف الشخصي"; AdminFormKind.PROVIDER -> "الشركة"; AdminFormKind.PREFIX -> "بادئة رقم"; AdminFormKind.TARIFF -> "التعرفة"
     AdminFormKind.PACKAGE -> "باقة نقاط"; AdminFormKind.PAYMENT_METHOD -> "وسيلة دفع"; AdminFormKind.TASK_SETTINGS -> "إعدادات المهام"
+    AdminFormKind.EXPENSE -> "مصروف"
 }
 private fun formContractNote(kind: AdminFormKind) = when (kind) {
     AdminFormKind.PREFIX -> "الإضافة والتعديل والحالة عبر admin_save_telecom_prefix، مع تدقيق الخادم. لا حذف صلب."
     AdminFormKind.TARIFF -> "تُحفظ أيام الوحدة وسعرها بالنقاط مع القيمة النقدية والعملة المطلوبة في V11. خصم العميل يعتمد نقاط الوحدة فقط؛ أدخل وقتًا ISO-8601."
-    AdminFormKind.PROVIDER -> "حفظ الشركة وإعدادات التشغيل عبر admin_save_provider."
-    AdminFormKind.USER -> "تعديل بيانات الحساب/الحالة عبر admin_update_profile."
-    AdminFormKind.PACKAGE -> "تعديل الباقة وحالتها عبر admin_save_points_package."
-    AdminFormKind.PAYMENT_METHOD -> "بيانات النوع والترتيب تحفظ داخل payment_data حسب المخطط الحالي."
-    AdminFormKind.TASK_SETTINGS -> "GAP-DB-016 مفتوح؛ لا تعتبر إعداد المهام دليلًا على إعادة بناء الخطط أو إعادة جدولة الموجود منها."
+    AdminFormKind.PROVIDER -> "حفظ company/code/name/status عبر admin_save_telecom_company مع سجل تدقيق."
+    AdminFormKind.USER -> "تحديث customer_profile عبر admin_update_customer_profile؛ لا يغير هوية الدخول ولا ينشئ دورًا."
+    AdminFormKind.PACKAGE -> "تُحفظ النقاط والسعر والظهور والتفعيل في أعمدة points_package الفعلية."
+    AdminFormKind.PAYMENT_METHOD -> "تُحفظ وسيلة الدفع في أعمدتها الفعلية receiving_account وtransfer_instructions وغيرها."
+    AdminFormKind.TASK_SETTINGS -> "يحفظ الترحيل نسخة إعداد سارية جديدة ولا يعيد كتابة المهام أو الخطط التاريخية؛ إعادة البناء غير مخولة."
+    AdminFormKind.EXPENSE -> "إنشاء مصروف append-only مع قيد مالي وفحص الرصيد وسجل تدقيق؛ لا تعديل أو حذف لقيد مرحّل."
 }
 private data class FieldSpec(val key: String, val label: String, val keyboard: KeyboardType = KeyboardType.Text)
 private fun formFields(kind: AdminFormKind): List<FieldSpec> = when (kind) {
-    AdminFormKind.USER -> listOf(FieldSpec("full_name", "الاسم الكامل"), FieldSpec("username", "اسم المستخدم"), FieldSpec("phone", "الهاتف", KeyboardType.Phone), FieldSpec("account_status", "حالة الحساب"))
-    AdminFormKind.PROVIDER -> listOf(FieldSpec("code", "رمز الشركة"), FieldSpec("name", "الاسم"), FieldSpec("short_name", "الاسم المختصر"), FieldSpec("status", "الحالة"), FieldSpec("operational_settings", "إعدادات التشغيل JSON"))
-    AdminFormKind.PREFIX -> listOf(FieldSpec("prefix", "البادئة (أرقام مع + اختياري)", KeyboardType.Phone), FieldSpec("country_code", "رمز الدولة"), FieldSpec("number_length", "طول الرقم", KeyboardType.Number), FieldSpec("status", "الحالة"))
+    AdminFormKind.USER -> listOf(FieldSpec("name", "الاسم"), FieldSpec("email", "البريد"), FieldSpec("account_status", "حالة الحساب"), FieldSpec("reason", "سبب التغيير"))
+    AdminFormKind.PROVIDER -> listOf(FieldSpec("code", "رمز الشركة"), FieldSpec("name", "الاسم"), FieldSpec("status", "الحالة"))
+    AdminFormKind.PREFIX -> listOf(FieldSpec("prefix", "البادئة (أرقام)"), FieldSpec("status", "الحالة"))
     AdminFormKind.TARIFF -> listOf(FieldSpec("tariff_mode", "وحدة التعرفة"), FieldSpec("duration_unit_days", "أيام الوحدة", KeyboardType.Number), FieldSpec("points_per_unit", "نقاط لكل وحدة", KeyboardType.Number), FieldSpec("rate", "القيمة النقدية للوحدة", KeyboardType.Decimal), FieldSpec("currency", "عملة القيمة النقدية"), FieldSpec("effective_from", "تاريخ السريان ISO-8601"), FieldSpec("effective_to", "تاريخ الانتهاء ISO-8601 (اختياري)"), FieldSpec("status", "الحالة"))
-    AdminFormKind.PACKAGE -> listOf(FieldSpec("name", "اسم الباقة"), FieldSpec("points_amount", "عدد النقاط", KeyboardType.Number), FieldSpec("price_amount", "السعر", KeyboardType.Decimal), FieldSpec("currency", "العملة"), FieldSpec("display_order", "ترتيب العرض", KeyboardType.Number), FieldSpec("status", "الحالة"))
-    AdminFormKind.PAYMENT_METHOD -> listOf(FieldSpec("name", "اسم وسيلة الدفع"), FieldSpec("method_type", "النوع"), FieldSpec("display_order", "ترتيب العرض", KeyboardType.Number), FieldSpec("payment_data", "بيانات الدفع JSON"), FieldSpec("instructions", "التعليمات"), FieldSpec("status", "الحالة"))
-    AdminFormKind.TASK_SETTINGS -> listOf(FieldSpec("interval_days", "الفاصل بالأيام", KeyboardType.Number), FieldSpec("task_amount", "قيمة المهمة", KeyboardType.Decimal), FieldSpec("currency", "العملة"), FieldSpec("visibility_days_before", "أيام الظهور قبل الاستحقاق", KeyboardType.Number), FieldSpec("auto_create", "إنشاء تلقائي"), FieldSpec("allow_reschedule", "السماح بإعادة الجدولة"), FieldSpec("allow_post_expiry_creation", "إنشاء بعد الانتهاء"), FieldSpec("post_expiry_creation_limit_days", "حد الأيام بعد الانتهاء", KeyboardType.Number))
+    AdminFormKind.PACKAGE -> listOf(FieldSpec("code", "رمز الباقة"), FieldSpec("name", "اسم الباقة"), FieldSpec("points", "عدد النقاط", KeyboardType.Number), FieldSpec("price", "السعر", KeyboardType.Decimal), FieldSpec("currency", "العملة"), FieldSpec("display_order", "ترتيب العرض", KeyboardType.Number), FieldSpec("is_visible", "مرئية"), FieldSpec("is_active", "مفعّلة"))
+    AdminFormKind.PAYMENT_METHOD -> listOf(FieldSpec("code", "رمز وسيلة الدفع"), FieldSpec("name", "اسم وسيلة الدفع"), FieldSpec("type", "النوع"), FieldSpec("receiving_account", "حساب الاستلام"), FieldSpec("transfer_instructions", "التعليمات"), FieldSpec("display_order", "ترتيب العرض", KeyboardType.Number), FieldSpec("is_visible", "مرئية"), FieldSpec("is_active", "مفعّلة"))
+    AdminFormKind.TASK_SETTINGS -> listOf(FieldSpec("interval_days", "الفاصل بالأيام", KeyboardType.Number), FieldSpec("task_amount", "قيمة المهمة", KeyboardType.Decimal), FieldSpec("currency", "العملة"), FieldSpec("visibility_days_before", "أيام الظهور قبل الاستحقاق", KeyboardType.Number), FieldSpec("allow_reschedule", "السماح بإعادة الجدولة"), FieldSpec("allow_post_expiry_creation", "السماح بالإنشاء بعد الانتهاء"), FieldSpec("post_expiry_grace_days", "أيام السماح بعد الانتهاء", KeyboardType.Number), FieldSpec("create_first_task_on_activation", "إنشاء أول مهمة عند التفعيل"), FieldSpec("create_first_task_on_renewal", "إنشاء أول مهمة عند التجديد"), FieldSpec("effective_from", "بدء السريان ISO-8601"))
+    AdminFormKind.EXPENSE -> listOf(FieldSpec("expense_type_id", "معرّف نوع المصروف"), FieldSpec("amount", "المبلغ", KeyboardType.Decimal), FieldSpec("currency", "العملة"), FieldSpec("description", "الوصف"), FieldSpec("reference", "مرجع (اختياري)"))
 }.map { FieldSpec(it.key, it.label, it.keyboard) }
 private fun optionLabel(value: String) = when (value) {
     "DAILY" -> "يومي"; "WEEKLY" -> "أسبوعي"; "MONTHLY" -> "شهري"; "YEARLY" -> "سنوي"
-    "active" -> "نشط"; "inactive" -> "غير نشط"; "archived" -> "مؤرشف"; "suspended" -> "موقوف"; "banned" -> "محظور"; "true" -> "نعم"; "false" -> "لا"; else -> value
+    "active", "ACTIVE" -> "نشط"; "inactive", "INACTIVE" -> "غير نشط"; "archived", "ARCHIVED" -> "مؤرشف"; "suspended", "SUSPENDED" -> "موقوف"; "DISABLED" -> "معطل"; "true" -> "نعم"; "false" -> "لا"; else -> value
 }
 private fun relatedReadPermission(kind: RelatedListKind) = when (kind) {
     RelatedListKind.SUBSCRIBER_NUMBERS -> AdminPermissions.NUMBERS_READ
@@ -765,6 +852,8 @@ private fun relatedReadPermission(kind: RelatedListKind) = when (kind) {
     RelatedListKind.SUBSCRIBER_HISTORY -> AdminPermissions.OPERATIONS_READ
     RelatedListKind.PROTECTION_TASKS -> AdminPermissions.TASKS_READ
     RelatedListKind.PROVIDER_PREFIXES, RelatedListKind.PROVIDER_TARIFFS -> AdminPermissions.PROVIDERS_READ
+    RelatedListKind.SUPPORT_MESSAGES -> AdminPermissions.SUPPORT_READ
+    RelatedListKind.PLAN_TASKS -> AdminPermissions.TASKS_READ
 }
 private fun sectionIcon(section: AdminSection): ImageVector = when (section) {
     AdminSection.HOME -> Icons.Outlined.Home; AdminSection.SUBSCRIBERS -> Icons.Outlined.People; AdminSection.USERS -> Icons.Outlined.Person
@@ -773,62 +862,72 @@ private fun sectionIcon(section: AdminSection): ImageVector = when (section) {
     AdminSection.PROVIDERS -> Icons.Outlined.Business; AdminSection.PACKAGES -> Icons.Outlined.Toll; AdminSection.PAYMENT_METHODS -> Icons.Outlined.Payment
     AdminSection.TASK_SETTINGS -> Icons.Outlined.Settings; AdminSection.SEARCH -> Icons.Outlined.Search; AdminSection.NOTIFICATIONS -> Icons.Outlined.Notifications
     AdminSection.REPORTS -> Icons.Outlined.Assessment; AdminSection.ACCOUNT -> Icons.Outlined.AccountCircle
+    AdminSection.PERIODIC_PAYMENT -> Icons.Outlined.Payment; AdminSection.TASK_PLANS -> Icons.Outlined.TaskAlt; AdminSection.FINANCE -> Icons.Outlined.Assessment
+    AdminSection.COMMUNICATIONS -> Icons.Outlined.People; AdminSection.ABOUT -> Icons.Outlined.Shield
+    AdminSection.SETUP -> Icons.Outlined.Settings; AdminSection.LOGIN -> Icons.Outlined.Person
+    AdminSection.REGISTRATION -> Icons.Outlined.Person; AdminSection.RECOVERY -> Icons.Outlined.Person
 }
 private fun fieldValue(row: JSONObject, key: String): String {
     val value = row.opt(key)
     return when (value) { null, JSONObject.NULL -> ""; is JSONObject, is JSONArray -> value.toString(); else -> value.toString() }
 }
 private fun fieldLabel(key: String) = when (key) {
-    "full_name" -> "الاسم"; "username" -> "اسم المستخدم"; "phone" -> "الهاتف"; "email" -> "البريد"; "status" -> "الحالة"
-    "account_status" -> "حالة الحساب"; "subscriber_status" -> "الاشتراك"; "balance_points" -> "رصيد النقاط"; "number_count" -> "عدد الأرقام"
-    "protection_count" -> "الحمايات النشطة"; "phone_e164" -> "الرقم"; "provider_name" -> "الشركة"; "customer_name" -> "العميل"
-    "added_at" -> "تاريخ الإضافة"; "started_at" -> "البداية"; "expires_at" -> "الانتهاء"; "duration_days" -> "المدة بالأيام"
-    "tariff_mode" -> "وحدة التعرفة"; "tariff_duration_unit_days" -> "أيام وحدة التعرفة"; "tariff_points_per_unit" -> "نقاط لكل وحدة"; "duration_unit_days" -> "أيام الوحدة"; "points_per_unit" -> "نقاط لكل وحدة"; "rate" -> "القيمة النقدية"; "currency" -> "العملة"; "total_points_snapshot" -> "النقاط المسجلة"; "remaining_days" -> "الأيام المتبقية"
+    "full_name", "name" -> "الاسم"; "username" -> "اسم المستخدم"; "phone" -> "الهاتف"; "email" -> "البريد"; "status" -> "الحالة"
+    "account_type" -> "نوع الحساب"; "account_status" -> "حالة الحساب"; "subscriber_status" -> "الاشتراك"; "balance_points" -> "رصيد النقاط"; "number_count" -> "عدد الأرقام"
+    "protection_count" -> "الحمايات النشطة"; "phone_e164", "display_phone" -> "الرقم"; "provider_name" -> "الشركة"; "customer_name" -> "العميل"
+    "public_added_number_code" -> "رمز الرقم المضاف"; "public_user_code" -> "رمز المستخدم"; "public_subscriber_code" -> "رمز المشترك"
+    "added_at" -> "تاريخ الإضافة"; "start_at", "started_at" -> "البداية"; "end_at", "expires_at" -> "الانتهاء"; "duration_days" -> "المدة بالأيام"
+    "tariff_mode" -> "وحدة التعرفة"; "tariff_duration_unit_days" -> "أيام وحدة التعرفة"; "tariff_points_per_unit" -> "نقاط لكل وحدة"; "duration_unit_days" -> "أيام الوحدة"; "duration_unit_days_snapshot" -> "أيام الوحدة"; "points_per_unit" -> "نقاط لكل وحدة"; "points_per_unit_snapshot" -> "نقاط لكل وحدة"; "rate" -> "القيمة النقدية"; "currency" -> "العملة"; "total_points_snapshot" -> "النقاط المسجلة"; "points_cost_snapshot" -> "تكلفة النقاط"; "units_snapshot" -> "عدد الوحدات"; "remaining_days" -> "الأيام المتبقية"
     "task_plan_interval_days" -> "فاصل المهام"; "next_task_due" -> "المهمة القادمة"; "next_task_status" -> "حالة المهمة"; "following_task_due" -> "المهمة التالية"
-    "request_number" -> "رقم الطلب"; "package_name" -> "الباقة"; "points_amount_snapshot" -> "النقاط"; "price_amount_snapshot" -> "السعر"
-    "currency_snapshot" -> "العملة"; "payment_method_name_snapshot" -> "وسيلة الدفع"; "payment_method_details" -> "التعليمات"
-    "payment_reference" -> "المرجع"; "submitted_at" -> "تاريخ الطلب"; "rejection_reason" -> "سبب الرفض"
-    "task_type" -> "نوع المهمة"; "due_at" -> "موعد الاستحقاق"; "amount_snapshot" -> "المبلغ"; "task_attention" -> "التوقيت"
-    "external_payment_reference" -> "مرجع السداد"; "name" -> "الاسم"; "short_name" -> "الاسم المختصر"; "code" -> "الرمز"
+    "public_purchase_code", "request_number" -> "رقم الطلب"; "package_name", "package_name_snapshot" -> "الباقة"; "points", "points_snapshot", "points_amount_snapshot" -> "النقاط"; "price", "price_snapshot", "price_amount_snapshot" -> "السعر"
+    "currency_snapshot" -> "العملة"; "payment_method_name_snapshot" -> "وسيلة الدفع"; "payment_method_details", "payment_method_details_snapshot" -> "بيانات وتعليمات الدفع"
+    "payment_reference", "transfer_reference" -> "المرجع"; "submitted_at" -> "تاريخ الطلب"; "rejection_reason" -> "سبب الرفض"
+    "public_task_code" -> "رمز المهمة"; "task_type" -> "نوع المهمة"; "due_at" -> "موعد الاستحقاق"; "amount_snapshot", "amount" -> "المبلغ"; "task_attention" -> "التوقيت"
+    "external_payment_reference", "execution_reference" -> "مرجع السداد"; "short_name" -> "الاسم المختصر"; "code" -> "الرمز"
     "prefix_count" -> "عدد البادئات"; "operational_settings" -> "إعدادات التشغيل"
     "prefix" -> "البادئة"; "country_code" -> "رمز الدولة"; "number_length" -> "طول الرقم"; "effective_from" -> "سريان من"; "effective_to" -> "سريان حتى"
-    "points_amount" -> "النقاط"; "price_amount" -> "السعر"; "display_order" -> "ترتيب العرض"
+    "display_order" -> "ترتيب العرض"; "type" -> "النوع"; "receiving_account" -> "حساب الاستلام"; "transfer_instructions" -> "التعليمات"; "is_visible" -> "مرئي"; "is_active" -> "مفعّل"
     "payment_data" -> "بيانات الدفع"; "instructions" -> "التعليمات"; "interval_days" -> "الفاصل"
-    "task_amount" -> "قيمة المهمة"; "visibility_days_before" -> "أيام الظهور"; "auto_create" -> "الإنشاء التلقائي"
-    "allow_reschedule" -> "إعادة الجدولة"; "allow_post_expiry_creation" -> "بعد الانتهاء"; "post_expiry_creation_limit_days" -> "حد ما بعد الانتهاء"
-    "target_type" -> "نوع المستهدف"; "target_id" -> "المستهدف"; "title" -> "العنوان"; "body" -> "المحتوى"; "recipient_count" -> "عدد المستلمين"; "sent_at" -> "الإرسال"
+    "task_amount" -> "قيمة المهمة"; "visibility_days_before" -> "أيام الظهور"; "create_first_task_on_activation" -> "مهمة عند التفعيل"
+    "create_first_task_on_renewal" -> "مهمة عند التجديد"; "allow_reschedule" -> "إعادة الجدولة"; "allow_post_expiry_creation" -> "بعد الانتهاء"; "post_expiry_grace_days" -> "أيام السماح بعد الانتهاء"
+    "target_type" -> "نوع المستهدف"; "target_id" -> "المستهدف"; "target_definition" -> "تعريف المستهدف"; "title" -> "العنوان"; "body" -> "المحتوى"; "recipient_count" -> "عدد المستلمين"; "sent_at" -> "الإرسال"
+    "entry_type" -> "نوع القيد"; "direction" -> "الاتجاه"; "description" -> "الوصف"; "source_type" -> "نوع المصدر"; "source_id" -> "معرّف المصدر"
+    "subject" -> "الموضوع"; "sender_type" -> "نوع المرسل"; "content_key" -> "مفتاح المحتوى"; "version" -> "الإصدار"
     else -> key
 }
 private fun searchDestination(row: JSONObject): AdminSection = when (row.optString("_aman_source_table")) {
-    "profiles" -> AdminSection.USERS
-    "subscribers" -> AdminSection.SUBSCRIBERS
-    "phone_numbers", "customer_numbers" -> AdminSection.ADDED_NUMBERS
-    "protections" -> AdminSection.ACTIVE_NUMBERS
-    "points_purchase_requests" -> AdminSection.PURCHASES
-    "payment_tasks" -> AdminSection.PAYMENT_TASKS
-    "telecom_providers" -> AdminSection.PROVIDERS
-    "points_packages" -> AdminSection.PACKAGES
-    "payment_methods" -> AdminSection.PAYMENT_METHODS
-    "task_settings" -> AdminSection.TASK_SETTINGS
-    "admin_notifications" -> AdminSection.NOTIFICATIONS
+    "customer_profile" -> if (row.optString("account_type") == "SUBSCRIBER") AdminSection.SUBSCRIBERS else AdminSection.USERS
+    "phone_number", "customer_number" -> AdminSection.ADDED_NUMBERS
+    "points_purchase" -> AdminSection.PURCHASES
+    "periodic_task" -> AdminSection.PAYMENT_TASKS
+    "telecom_company" -> AdminSection.PROVIDERS
+    "points_package" -> AdminSection.PACKAGES
+    "payment_method" -> AdminSection.PAYMENT_METHODS
+    "task_configuration" -> AdminSection.TASK_SETTINGS
+    "task_plan" -> AdminSection.TASK_PLANS
+    "admin_notification_campaign" -> AdminSection.NOTIFICATIONS
+    "financial_ledger" -> AdminSection.FINANCE
     else -> AdminSection.REPORTS
 }
 
 private fun recordTitle(section: AdminSection, row: JSONObject): String = when {
-    row.has("_record_type") -> "${row.optString("_record_type")} · ${row.optString("full_name").ifBlank { row.optString("phone_e164") }.ifBlank { row.optString("request_number") }.ifBlank { row.optString("operation_type") }.ifBlank { row.optString("id") }}"
+    row.has("_record_type") -> "${row.optString("_record_type")} · ${row.optString("name").ifBlank { row.optString("full_name") }.ifBlank { row.optString("phone_e164") }.ifBlank { row.optString("public_purchase_code") }.ifBlank { row.optString("request_number") }.ifBlank { row.optString("operation_type") }.ifBlank { row.optString("id") }}"
     section == AdminSection.PROVIDERS -> row.optString("name").ifBlank { row.optString("code") }
     section == AdminSection.PACKAGES || section == AdminSection.PAYMENT_METHODS -> row.optString("name")
-    section == AdminSection.USERS || section == AdminSection.SUBSCRIBERS -> row.optString("full_name").ifBlank { row.optString("email") }.ifBlank { row.optString("user_id") }
-    section == AdminSection.ADDED_NUMBERS || section == AdminSection.ACTIVE_NUMBERS -> row.optString("phone_e164").ifBlank { row.optString("id") }
-    section == AdminSection.PURCHASES -> row.optString("request_number").ifBlank { row.optString("id") }
-    section == AdminSection.PAYMENT_TASKS -> "${row.optString("phone_e164").ifBlank { row.optString("id") }} · ${row.optString("due_at")}"
+    section == AdminSection.USERS || section == AdminSection.SUBSCRIBERS -> row.optString("name").ifBlank { row.optString("email") }.ifBlank { row.optString("public_user_code") }
+    section == AdminSection.ADDED_NUMBERS || section == AdminSection.ACTIVE_NUMBERS -> row.optString("phone_e164").ifBlank { row.optString("display_phone") }.ifBlank { row.optString("id") }
+    section == AdminSection.PURCHASES -> row.optString("public_purchase_code").ifBlank { row.optString("id") }
+    section == AdminSection.PAYMENT_TASKS || section == AdminSection.PERIODIC_PAYMENT -> "${row.optString("phone_e164").ifBlank { row.optString("public_task_code") }} · ${row.optString("due_at")}"
+    section == AdminSection.TASK_PLANS -> "خطة v${row.optInt("version")} · ${row.optString("anchor_at")}"
     section == AdminSection.NOTIFICATIONS -> row.optString("title")
+    section == AdminSection.COMMUNICATIONS -> row.optString("subject").ifBlank { row.optString("id") }
+    section == AdminSection.FINANCE -> "${row.optString("entry_type")} · ${row.optString("amount")} ${row.optString("currency")}"
     else -> row.optString("operation_type").ifBlank { row.optString("id") }
 }
 private fun recordSubtitle(row: JSONObject): String = listOf(row.optString("customer_name"), row.optString("provider_name"), row.optString("created_at"), row.optString("due_at")).firstOrNull(String::isNotBlank).orEmpty()
 private fun statusLabel(value: String) = when (value.lowercase()) {
     "active" -> "نشط"; "inactive" -> "غير نشط"; "archived" -> "مؤرشف"; "pending" -> "قيد المراجعة"; "approved" -> "معتمد"; "rejected" -> "مرفوض"
-    "open" -> "مفتوحة"; "completed" -> "مكتملة"; "cancelled" -> "ملغاة"; "failed" -> "فشلت"; "succeeded" -> "ناجحة"; "suspended" -> "موقوفة"; else -> value
+    "open" -> "مفتوحة"; "completed" -> "مكتملة"; "cancelled" -> "ملغاة"; "failed" -> "فشلت"; "succeeded" -> "ناجحة"; "suspended" -> "موقوفة"; "disabled" -> "معطلة"; "expired" -> "منتهية"; else -> value
 }
 private fun csv(rows: List<JSONObject>): String {
     if (rows.isEmpty()) return ""
