@@ -570,7 +570,10 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
         } else if (requestApproved) NoticeBanner("المحادثة مغلقة ولا يمكن إرسال رد جديد.", true)
     }
     if (newConversation) OutlinedTextField(subject, { subject = it }, Modifier.fillMaxWidth().traceElement("C15.SUBJECT"), label = { Text("موضوع الطلب") }, singleLine = true)
-    if (newConversation || (thread?.optString("status").equals("OPEN", true) && thread.optString("request_status").let { it.isBlank() || it == "APPROVED" })) {
+    if (newConversation || thread?.let { activeThread ->
+            activeThread.optString("status").equals("OPEN", true) &&
+                activeThread.optString("request_status").let { it.isBlank() || it == "APPROVED" }
+        } == true) {
         OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth().height(130.dp).traceElement("C15.MESSAGE"), label = { Text(if (newConversation) "الرسالة" else "الرد") })
         Button(onClick = {
             if (newConversation) vm.createSupportConversation(subject, body) else vm.sendSupportMessage(selectedId, body)
