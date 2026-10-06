@@ -257,7 +257,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
     fun deleteCustomerNumber(id: String) = mutate("number.delete", "تمت أرشفة الرقم بعد تأكيد الخادم.") { withContext(Dispatchers.IO) { repository.deleteCustomerNumber(id) } }
     fun markNotificationRead(id: String) = mutate("notification.read", "تم تحديث حالة قراءة الإشعار.") { withContext(Dispatchers.IO) { repository.markNotificationRead(id) } }
     fun markAdminMessageRead(id: String) = mutate("admin-message.read", "تم تحديث حالة قراءة الرسالة.") { withContext(Dispatchers.IO) { repository.markAdminMessageRead(id) } }
-    fun createSupportConversation(subject: String, body: String) = mutate("support.create", "تم إنشاء المحادثة وإرسال الرسالة الأولى.") { withContext(Dispatchers.IO) { repository.createSupportConversation(subject, body) } }
+    fun createSupportConversation(subject: String, body: String) = mutate("support.create", "تم إرسال طلب الدعم؛ ستُفتح المحادثة بعد موافقة الإدارة.") { withContext(Dispatchers.IO) { repository.createSupportConversation(subject, body) } }
     fun sendSupportMessage(id: String, body: String) = mutate("support.send", "تم إرسال الرسالة إلى المحادثة.") { withContext(Dispatchers.IO) { repository.sendSupportMessage(id, body) } }
     fun closeSupportConversation(id: String) = mutate("support.close", "تم إغلاق المحادثة.") { withContext(Dispatchers.IO) { repository.closeSupportConversation(id) } }
     fun updateProfile(name: String) = mutate("profile.update", "تم حفظ الاسم.") { withContext(Dispatchers.IO) { repository.updateCustomerProfile(name) } }

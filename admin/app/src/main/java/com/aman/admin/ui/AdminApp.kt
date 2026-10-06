@@ -778,7 +778,7 @@ private fun CenterProgress(message: String, modifier: Modifier = Modifier) {
 }
 
 private fun actionTitle(action: AdminMutation) = when (action) {
-    AdminMutation.APPROVE_PURCHASE -> "تأكيد اعتماد الشراء"
+    AdminMutation.APPROVE_PURCHASE -> "اعتماد الشراء بعد التحقق من المرجع"
     AdminMutation.REJECT_PURCHASE -> "رفض طلب الشراء"
     AdminMutation.EXECUTE_PAYMENT_TASK -> "تسجيل سداد تم خارجيًا"
     AdminMutation.RESCHEDULE_PAYMENT_TASK -> "إعادة جدولة المهمة"
@@ -798,7 +798,7 @@ private fun actionInputLabel(action: AdminMutation) = when (action) {
     else -> "البيانات المطلوبة"
 }
 private fun actionExplanation(action: AdminMutation, row: JSONObject?) = when (action) {
-    AdminMutation.APPROVE_PURCHASE -> "سيعتمد Backend الطلب ويضيف النقاط ويسجل ledger والإشعار والتدقيق. رقم الطلب: ${row?.optString("request_number").orEmpty()}"
+    AdminMutation.APPROVE_PURCHASE -> "تحقق خارجيًا من رقم المرجع ومطابقته للطلب والمبلغ قبل الاعتماد. بعد تأكيدك، سيعتمد Backend الطلب ويضيف النقاط ويسجل ledger والإشعار والتدقيق. رقم الطلب: ${row?.optString("public_purchase_code").orEmpty()} · المرجع: ${row?.optString("transfer_reference").orEmpty()}"
     AdminMutation.REJECT_PURCHASE -> "أدخل سببًا؛ لن تُضاف نقاط، وسيسجل Backend القرار ويرسل إشعارًا للمستخدم."
     AdminMutation.EXECUTE_PAYMENT_TASK -> "نفّذ السداد عبر القناة الخارجية الرسمية أولًا. التطبيق لا يحول أموالًا؛ يسجل فقط نتيجة السداد ومرجعه."
     AdminMutation.RESCHEDULE_PAYMENT_TASK -> "يجب أن يكون الموعد مستقبلًا وضمن فترة الحماية. لا نفترض إعادة بناء خطة المهام؛ GAP-DB-016 ما زال مفتوحًا."

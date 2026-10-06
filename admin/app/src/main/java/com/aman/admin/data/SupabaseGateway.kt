@@ -1,6 +1,7 @@
 package com.aman.admin.data
 
 import android.content.Context
+import android.util.Base64
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.aman.admin.BuildConfig
@@ -21,7 +22,7 @@ internal data class AmanSession(val accessToken: String, val refreshToken: Strin
 /** Supabase Auth/PostgREST client. The only accepted API key is the public anon key. */
 class SupabaseGateway(context: Context) {
     private val baseUrl = BuildConfig.SUPABASE_URL.trimEnd('/')
-    private val anonKey = BuildConfig.SUPABASE_ANON_KEY
+    private val anonKey = BuildConfig.SUPABASE_ANON_KEY.trim()
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).callTimeout(40, TimeUnit.SECONDS).build()
     private val jsonType = "application/json; charset=utf-8".toMediaType()
@@ -32,7 +33,7 @@ class SupabaseGateway(context: Context) {
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM)
     }
 
-    fun isConfigured(): Boolean = baseUrl.startsWith("https://") && anonKey.isNotBlank()
+    fun isConfigured(): Boolean = baseUrl.startsWith("https://") && anonKey.isNotBlank() && !isPrivilegedKey(anonKey)
     fun configurationMessage(): String? = if (isConfigured()) null else
         "إعدادات خدمة المصادقة غير مهيأة. مرّر SUPABASE_URL وSUPABASE_ANON_KEY وقت البناء؛ لا تضع service_role أو أسرارًا داخل التطبيق."
     fun currentUserId(): String? = readSession()?.userId
@@ -175,4 +176,13 @@ class SupabaseGateway(context: Context) {
     }
 
     private fun ensureConfigured() { if (!isConfigured()) throw ContractException(configurationMessage() ?: "Supabase غير مهيأ") }
+
+    private fun isPrivilegedKey(key: String): Boolean {
+        if (key.contains("service_role", true) || key.startsWith("sb_secret_", true)) return true
+        val tokenPart = key.split('.').getOrNull(1) ?: return false
+        return runCatching {
+            val json = String(Base64.decode(tokenPart, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING), Charsets.UTF_8)
+            JSONObject(json).optString("role").equals("service_role", true)
+        }.getOrDefault(false)
+    }
 }

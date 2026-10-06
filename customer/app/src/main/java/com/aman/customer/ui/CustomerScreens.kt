@@ -323,9 +323,13 @@ private fun AddedNumbersScreen(data: CustomerScreenData, vm: CustomerViewModel) 
     if (rows.isEmpty()) EmptyPanel(if (data.related.array("numbers").length() == 0) "لا توجد أرقام مضافة." else "لا توجد نتائج مطابقة.")
     rows.forEach { row ->
         DataCard(toCustomerRecord("customer_number", row), traceId = "C08.LIST")
+        KeyValue("حالة الرقم", row.optString("status").ifBlank { "غير متاحة" })
+        KeyValue("حالة الحماية", if (row.optBoolean("active_protection", false)) "حماية نشطة" else "لا توجد حماية نشطة")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             TextButton(onClick = { vm.editCustomerNumber(row.optString("id")) }, modifier = Modifier.weight(1f)) { Text("تعديل · C05") }
-            TextButton(onClick = { vm.beginActivation(row.optString("id")) }, modifier = Modifier.weight(1f)) { Text("تفعيل · C11") }
+            if (row.optString("status").equals("ACTIVE", true) && !row.optBoolean("active_protection", false)) {
+                TextButton(onClick = { vm.beginActivation(row.optString("id")) }, modifier = Modifier.weight(1f)) { Text("تفعيل · C11") }
+            }
         }
     }
 }
@@ -348,9 +352,31 @@ private fun ProtectionListScreen(data: CustomerScreenData, vm: CustomerViewModel
     rows.forEach { row ->
         DataCard(toCustomerRecord("protection_period", row), traceId = if (expired) "C10.LIST" else "C09.LIST")
         Text("الشركة: ${row.optString("company_name").ifBlank { "غير متاحة" }} · المدة: ${row.optString("duration_days")} يوم", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!expired && row.optBoolean("needs_extension", false)) {
+            NoticeBanner("يحتاج هذا الرقم إلى التمديد وفق إعداد الشركة: ${row.optInt("remaining_days")} يومًا متبقيًا، وحد التنبيه ${row.optInt("extension_warning_days")} يومًا.", true)
+        }
+        ExtensionHistory(row.optString("id"), data.related.array("extensions").objects())
         TextButton(onClick = { if (expired) vm.beginRenewal(row.optString("id")) else vm.beginExtension(row.optString("id")) },
             modifier = Modifier.traceElement(if (expired) "C10.RENEW" else "C09.EXTEND")) {
             Text(if (expired) "تجديد الحماية · C13" else "تمديد الحماية · C12")
+        }
+    }
+}
+
+@Composable
+private fun ExtensionHistory(protectionId: String, extensions: List<JSONObject>) {
+    val rows = extensions.filter { it.optString("protection_period_id") == protectionId }
+    if (rows.isNotEmpty()) {
+        SectionTitle("سجل التمديد", "يبقى تاريخ الانتهاء السابق محفوظًا مع كل عملية تمديد مؤكدة.")
+        rows.forEach { extension ->
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    KeyValue("الانتهاء قبل التمديد", formatDate(extension.optString("previous_end_at")))
+                    KeyValue("الانتهاء بعد التمديد", formatDate(extension.optString("new_end_at")))
+                    KeyValue("الأيام المضافة", extension.optString("days_added"))
+                    KeyValue("تكلفة التمديد", extension.optString("points_cost"))
+                }
+            }
         }
     }
 }
@@ -405,6 +431,7 @@ private fun ProtectionActionScreen(data: CustomerScreenData, state: CustomerUiSt
             KeyValue("الشركة", target.optString("company_name"))
             if (target.optString("start_at").isNotBlank()) KeyValue("بداية الفترة", formatDate(target.optString("start_at")))
             if (target.optString("end_at").isNotBlank()) KeyValue("الانتهاء الحالي", formatDate(target.optString("end_at")))
+            if (!isActivation) ExtensionHistory(targetId, data.related.array("extensions").objects())
         }
         if (tariffs.isEmpty()) NoticeBanner("لا توجد تعرفة نشطة ومهيأة لهذه الشركة.", true)
         else {
@@ -480,7 +507,7 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
     }
     LaunchedEffect(state.mutationMessage) {
         when (state.mutationMessage) {
-            "تم إنشاء المحادثة وإرسال الرسالة الأولى." -> { newConversation = false; subject = ""; body = "" }
+            "تم إرسال طلب الدعم؛ ستُفتح المحادثة بعد موافقة الإدارة." -> { newConversation = false; subject = ""; body = "" }
             "تم إرسال الرسالة إلى المحادثة." -> body = ""
             "تم إغلاق المحادثة." -> selectedId = ""
         }
@@ -633,6 +660,7 @@ private fun AccountScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
     }
     SectionTitle("الحساب")
     KeyValue("معرّف المستخدم", profile.optString("public_user_code"))
+    NoticeBanner("احفظ معرّف المستخدم في مكان آمن؛ ستحتاج إليه مع البريد الإلكتروني واسمك عند استعادة الحساب. لا يمكن تعديل هذا المعرّف.", true)
     KeyValue("البريد الإلكتروني", profile.optString("email"))
     KeyValue("نوع الحساب", profile.optString("account_type"))
     OutlinedButton(onClick = { clipboard.setText(AnnotatedString(profile.optString("public_user_code"))) }, Modifier.traceElement("C18.ID")) { Text("نسخ معرّف المستخدم") }

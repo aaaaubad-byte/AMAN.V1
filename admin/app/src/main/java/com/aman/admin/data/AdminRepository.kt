@@ -7,7 +7,6 @@ import java.math.BigDecimal
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.time.Instant
-import java.util.UUID
 
 class ContractException(message: String) : Exception(message)
 
@@ -18,6 +17,12 @@ data class LoadedRecords(
     val warningMessage: String? = null,
     val pageIndex: Int = 0,
     val pageHasMore: Boolean = false,
+)
+
+private data class SearchPage(
+    val rows: List<JSONObject>,
+    val warningMessage: String?,
+    val hasMore: Boolean,
 )
 
 /** V11-only data access. Sensitive writes are RPC-only; never mutate PostgREST tables directly. */
@@ -44,9 +49,13 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
         val cacheKey = "$uid:${section.name}"
         try {
             var warning: String? = null
+            var searchHasMore = false
             val rawRows = when (section) {
                 AdminSection.HOME -> loadDashboard().also { warning = it.second }.first
-                AdminSection.SEARCH -> searchAll(query, status).also { warning = it.second }.first
+                AdminSection.SEARCH -> searchAll(query, status, page).also {
+                    warning = it.warningMessage
+                    searchHasMore = it.hasMore
+                }.rows
                 AdminSection.ACCOUNT -> listOf(accountInfo())
                 AdminSection.REPORTS -> emptyList()
                 AdminSection.RECOVERY, AdminSection.LOGIN -> emptyList()
@@ -54,9 +63,9 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
                 AdminSection.SETUP -> selectRows("maintenance_config", "select=*&limit=20")
                 else -> loadSectionRows(section, query, status, dateFrom, dateTo, providerQuery, page)
             }
-            val pageable = section !in setOf(AdminSection.HOME, AdminSection.SEARCH, AdminSection.ACCOUNT, AdminSection.REPORTS, AdminSection.ABOUT, AdminSection.SETUP)
-            val pageHasMore = pageable && rawRows.size > 50
-            val rows = if (pageable) rawRows.take(50) else rawRows
+            val pageable = section !in setOf(AdminSection.HOME, AdminSection.ACCOUNT, AdminSection.REPORTS, AdminSection.ABOUT, AdminSection.SETUP)
+            val pageHasMore = if (section == AdminSection.SEARCH) searchHasMore else pageable && rawRows.size > 50
+            val rows = if (pageable && section != AdminSection.SEARCH) rawRows.take(50) else rawRows
             if (section !in setOf(AdminSection.SEARCH, AdminSection.ACCOUNT, AdminSection.RECOVERY, AdminSection.LOGIN)) enrich(section, rows)
             cache.put(cacheKey, JSONArray().apply { rows.forEach(::put) })
             return LoadedRecords(rows, warningMessage = warning, pageIndex = page.coerceAtLeast(0), pageHasMore = pageHasMore)
@@ -249,18 +258,26 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
 
     private suspend fun filterPaymentWindow(rows: List<JSONObject>): List<JSONObject> {
         val configs = runCatching { selectRows("task_configuration", "select=telecom_company_id,visibility_days_before,status,effective_from,effective_to&status=eq.ACTIVE&limit=1000") }.getOrDefault(emptyList())
-        val visibilityByCompany = configs.groupBy { it.optString("telecom_company_id") }
-            .mapValues { (_, values) -> values.maxByOrNull { it.optString("effective_from") }?.optInt("visibility_days_before", 5) ?: 5 }
         val now = Instant.now()
+        val activeConfigs = configs.filter { config ->
+            val from = runCatching { Instant.parse(config.optString("effective_from")) }.getOrNull()
+            val toText = config.optString("effective_to")
+            val to = if (toText.isBlank()) null else {
+                runCatching { Instant.parse(toText) }.getOrNull() ?: return@filter false
+            }
+            from != null && !from.isAfter(now) && (to == null || to.isAfter(now))
+        }
+        val visibilityByCompany = activeConfigs.groupBy { it.optString("telecom_company_id") }
+            .mapValues { (_, values) -> values.maxByOrNull { it.optString("effective_from") }?.optInt("visibility_days_before", -1) ?: -1 }
         return rows.filter { row ->
             val due = runCatching { Instant.parse(row.optString("due_at")) }.getOrNull() ?: return@filter false
-            val window = visibilityByCompany[row.optString("telecom_company_id")] ?: 5
-            row.optString("status") == "OPEN" && !due.isAfter(now.plusSeconds(window.toLong() * 86_400L))
+            val window = visibilityByCompany[row.optString("telecom_company_id")] ?: return@filter false
+            window >= 0 && row.optString("status") == "OPEN" && !due.isAfter(now.plusSeconds(window.toLong() * 86_400L))
         }
     }
 
-    private suspend fun searchAll(query: String, tableFilter: String = ""): Pair<List<JSONObject>, String?> {
-        if (query.trim().isEmpty()) return emptyList<JSONObject>() to null
+    private suspend fun searchAll(query: String, tableFilter: String = "", page: Int = 0): SearchPage {
+        if (query.trim().isEmpty()) return SearchPage(emptyList(), null, false)
         val sources = listOf(
             Triple("customer_profile", "name,email,public_user_code", AdminPermissions.CUSTOMERS_READ),
             Triple("phone_number", "display_phone,normalized_phone", AdminPermissions.NUMBERS_READ),
@@ -275,17 +292,21 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
         ).filter { (table, _, permission) -> (tableFilter.isBlank() || table == tableFilter) && runCatching { gateway.hasPermission(permission) }.getOrDefault(false) }
         val merged = mutableListOf<JSONObject>()
         val issues = mutableListOf<String>()
+        var hasMore = false
+        val offset = page.coerceAtLeast(0) * 50
         for ((table, columns, _) in sources) {
             try {
                 val term = filterValue("*${query.trim()}*")
                 val orClause = columns.split(',').joinToString(",") { "$it.ilike.$term" }
-                selectRows(table, "select=*&or=($orClause)&limit=100").forEach { row ->
+                val sourceRows = selectRows(table, "select=*&or=($orClause)&order=id.asc&limit=51&offset=$offset")
+                if (sourceRows.size > 50) hasMore = true
+                sourceRows.take(50).forEach { row ->
                     row.put("_aman_source_table", table).put("_record_type", tableLabel(table)); merged += row
                 }
             } catch (_: Exception) { issues += table }
         }
         if (merged.isEmpty() && issues.size == sources.size && sources.isNotEmpty()) throw ContractException("تعذر تنفيذ البحث ضمن مصادر الصلاحية.")
-        return merged to issues.takeIf { it.isNotEmpty() }?.joinToString("، ") { "مصدر غير متاح: $it" }
+        return SearchPage(merged, issues.takeIf { it.isNotEmpty() }?.joinToString("، ") { "مصدر غير متاح: $it" }, hasMore)
     }
 
     private suspend fun enrich(section: AdminSection, rows: List<JSONObject>) {
@@ -448,7 +469,8 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
 
     suspend fun perform(section: AdminSection, action: AdminMutation, row: JSONObject, input: String = "") {
         val id = row.optString("id").takeIf(String::isNotBlank) ?: throw ContractException("السجل المحدد لا يحتوي معرّفًا صالحًا.")
-        val key = UUID.randomUUID().toString()
+        val requestIdentity = "${action.name}|$id|${input.trim()}|$row"
+        val key = cache.getOrCreateIdempotencyKey("admin-mutation", requestIdentity)
         val args = when (action) {
             AdminMutation.APPROVE_PURCHASE -> JSONObject().put("p_purchase_id", id).put("p_idempotency_key", key)
             AdminMutation.REJECT_PURCHASE -> JSONObject().put("p_purchase_id", id).put("p_reason", input.trim()).put("p_idempotency_key", key)
@@ -467,10 +489,12 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             else -> throw ContractException("الإجراء غير متاح لهذا السجل.")
         }
         gateway.rpc(action.rpcName, args)
+        cache.completeIdempotencyKey("admin-mutation", requestIdentity, key)
     }
 
     suspend fun saveForm(kind: AdminFormKind, id: String?, parentId: String?, values: Map<String, String>) {
-        val key = UUID.randomUUID().toString()
+        val requestIdentity = "${kind.name}|${id.orEmpty()}|${parentId.orEmpty()}|${values.toSortedMap()}"
+        val key = cache.getOrCreateIdempotencyKey("admin-form", requestIdentity)
         val args: JSONObject
         val rpc: String
         when (kind) {
@@ -541,6 +565,7 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             }
         }
         gateway.rpc(rpc, args)
+        cache.completeIdempotencyKey("admin-form", requestIdentity, key)
     }
 
     private fun validateForm(kind: AdminFormKind, id: String?, parentId: String?, values: Map<String, String>) {
@@ -574,9 +599,12 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
         val kind = targetType.uppercase()
         if (kind in setOf("USER", "SUBSCRIBER") && targetId.isNullOrBlank()) throw ContractException("اختر مستهدفًا من نتائج البحث.")
         if (title.trim().isEmpty() || title.trim().length > 160 || body.trim().isEmpty() || body.trim().length > 4000) throw ContractException("تحقق من عنوان ومحتوى الإشعار.")
+        val requestIdentity = "${kind}|${targetId.orEmpty()}|${title.trim()}|${body.trim()}"
+        val key = cache.getOrCreateIdempotencyKey("admin-notification", requestIdentity)
         gateway.rpc("admin_send_notification", JSONObject().put("p_target_type", kind)
             .put("p_target_id", targetId?.takeIf(String::isNotBlank) ?: JSONObject.NULL)
-            .put("p_title", title.trim()).put("p_body", body.trim()).put("p_idempotency_key", UUID.randomUUID().toString()))
+            .put("p_title", title.trim()).put("p_body", body.trim()).put("p_idempotency_key", key))
+        cache.completeIdempotencyKey("admin-notification", requestIdentity, key)
     }
 
     private fun parseDate(date: String, endOfDay: Boolean): String? {

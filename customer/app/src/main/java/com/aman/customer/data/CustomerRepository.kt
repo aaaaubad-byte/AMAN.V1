@@ -8,6 +8,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.Duration
+import java.time.Instant
 
 class CustomerRepository(
     private val context: Context,
@@ -38,6 +40,9 @@ class CustomerRepository(
                 .put("p_page_offset", pageOffset.coerceAtLeast(0))))
         } catch (e: CancellationException) {
             throw e
+        }
+        if (screen in setOf(CustomerScreen.ACTIVE_NUMBERS, CustomerScreen.EXPIRED_NUMBERS, CustomerScreen.EXTEND, CustomerScreen.RENEW)) {
+            enrichProtectionWarnings(payload)
         }
         if (userId != "public" && pageOffset == 0) cache.put(userId, screen, JSONObject().put("user", userId).put("screen", screen.id).put("payload", payload))
         build(screen, payload, search = search)
@@ -126,7 +131,11 @@ class CustomerRepository(
 
     suspend fun closeSupportConversation(conversationId: String) {
         if (conversationId.isBlank()) throw CustomerContractException("اختر محادثة صالحة.")
-        gateway.rpc("close_support_conversation", JSONObject().put("p_conversation_id", conversationId))
+        val userId = gateway.currentUserId() ?: throw CustomerContractException("يلزم تسجيل الدخول.")
+        val key = operationKeys.getOrCreate(userId, "close-support-conversation", conversationId)
+        gateway.rpc("close_support_conversation", JSONObject()
+            .put("p_conversation_id", conversationId)
+            .put("p_idempotency_key", key))
     }
 
     suspend fun markNotificationRead(notificationId: String) {
@@ -198,5 +207,50 @@ class CustomerRepository(
         } else related.array(mainKey).objects().map { toCustomerRecord(mainKey, it) }
         return CustomerScreenData(screen = screen, records = records, related = related, loadedAt = loadedAt,
             hasMore = payload.optJSONObject("page_info")?.optBoolean("has_more", false) ?: false)
+    }
+
+    private suspend fun enrichProtectionWarnings(payload: JSONObject) {
+        val rows = payload.optJSONArray("protections") ?: return
+        val protectionIds = rows.objects().map { it.optString("id") }.filter(String::isNotBlank).distinct()
+        if (protectionIds.isEmpty()) return
+        val companyIds = rows.objects().map { it.optString("telecom_company_id") }
+            .filter(String::isNotBlank).distinct()
+        val companies = if (companyIds.isEmpty()) emptyMap() else {
+            val filter = "in.(${companyIds.joinToString(",")})"
+            JSONArray(gateway.select("telecom_company", listOf(
+                "select" to "id,extension_warning_days",
+                "id" to filter,
+            ))).objects().associateBy { it.optString("id") }
+        }
+        val extensionFilter = "in.(${protectionIds.joinToString(",")})"
+        val extensions = JSONArray(gateway.select("protection_extension", listOf(
+            "select" to "id,protection_period_id,days_added,points_cost,created_at,units_added",
+            "protection_period_id" to extensionFilter,
+            "order" to "created_at.asc",
+            "limit" to "1000",
+        ))).objects()
+        val histories = extensions.groupBy { it.optString("protection_period_id") }
+        val now = Instant.now()
+        rows.objects().forEach { row ->
+            val warningDays = companies[row.optString("telecom_company_id")]?.optInt("extension_warning_days", 0) ?: 0
+            val remainingDays = runCatching {
+                Duration.between(now, Instant.parse(row.optString("end_at"))).toDays().coerceAtLeast(0)
+            }.getOrNull()
+            row.put("extension_warning_days", warningDays)
+            row.put("remaining_days", remainingDays ?: JSONObject.NULL)
+            row.put("needs_extension", warningDays > 0 && remainingDays != null && remainingDays <= warningDays)
+            val history = histories[row.optString("id")].orEmpty()
+            val end = runCatching { Instant.parse(row.optString("end_at")) }.getOrNull()
+            if (end != null && history.isNotEmpty()) {
+                var priorEnd = end.minus(Duration.ofDays(history.sumOf { it.optLong("days_added", 0L) }))
+                history.forEach { extension ->
+                    val nextEnd = priorEnd.plus(Duration.ofDays(extension.optLong("days_added", 0L)))
+                    extension.put("previous_end_at", priorEnd.toString()).put("new_end_at", nextEnd.toString())
+                    priorEnd = nextEnd
+                }
+            }
+            row.put("extension_history", JSONArray().apply { history.forEach(::put) })
+        }
+        payload.put("extensions", JSONArray().apply { extensions.forEach(::put) })
     }
 }
