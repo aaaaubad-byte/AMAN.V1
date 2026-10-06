@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -160,8 +161,8 @@ private fun LoginScreen(state: CustomerUiState, vm: CustomerViewModel) {
         OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth().traceElement("C02.EMAIL"), label = { Text("البريد الإلكتروني") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
         OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().traceElement("C02.PASSWORD"), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
         AuthFeedback(state, vm)
-        Button(onClick = { vm.signIn(email, password) }, enabled = !state.authBusy && email.contains("@") && password.isNotBlank() && vm.isConfigured(),
-            Modifier.fillMaxWidth().traceElement("C02.SUBMIT")) {
+        Button(onClick = { vm.signIn(email, password) }, modifier = Modifier.fillMaxWidth().traceElement("C02.SUBMIT"),
+            enabled = !state.authBusy && email.contains("@") && password.isNotBlank() && vm.isConfigured()) {
             if (state.authBusy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp) else Text("تسجيل الدخول")
         }
         TextButton(onClick = { vm.navigate(CustomerScreen.SIGN_UP) }, modifier = Modifier.traceElement("C02.SIGNUP")) { Text("إنشاء حساب جديد") }
@@ -188,8 +189,8 @@ private fun SignUpScreen(state: CustomerUiState, vm: CustomerViewModel) {
         TextButton(onClick = { privacy = !privacy }, modifier = Modifier.fillMaxWidth().traceElement("C03.CONSENT.PRIVACY")) { Text("${if (privacy) "☑" else "□"} أوافق على سياسة الخصوصية") }
         TextButton(onClick = { vm.navigate(CustomerScreen.ABOUT) }) { Text("قراءة الشروط والخصوصية") }
         AuthFeedback(state, vm)
-        Button(onClick = { vm.signUp(name, email, password, confirm, terms, privacy) }, enabled = !state.authBusy && vm.isConfigured(),
-            Modifier.fillMaxWidth().traceElement("C03.SUBMIT")) {
+        Button(onClick = { vm.signUp(name, email, password, confirm, terms, privacy) }, modifier = Modifier.fillMaxWidth().traceElement("C03.SUBMIT"),
+            enabled = !state.authBusy && vm.isConfigured()) {
             if (state.authBusy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp) else Text("إنشاء الحساب")
         }
         TextButton(onClick = { vm.navigate(CustomerScreen.LOGIN) }) { Text("لديك حساب؟ تسجيل الدخول") }
@@ -203,13 +204,13 @@ private fun RecoveryScreen(state: CustomerUiState, vm: CustomerViewModel) {
     var email by rememberSaveable { mutableStateOf("") }
     var userId by rememberSaveable { mutableStateOf("") }
     AuthScaffold(title = "استعادة الحساب", screenId = "C20") {
-        Text("أدخل بيانات الاستعادة. لأمان الحساب ستكون نتيجة الطلب عامة ولا تكشف ما إذا كان الاسم أو المعرّف مسجلًا.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("أدخل بيانات الاستعادة. يرسل Supabase Auth التعليمات إلى البريد الإلكتروني فقط؛ لا يتحقق هذا المسار من الاسم أو معرّف المستخدم. وستبقى نتيجة الطلب عامة لحماية الحسابات.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().traceElement("C20.NAME"), label = { Text("الاسم") }, singleLine = true)
         OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth().traceElement("C20.EMAIL"), label = { Text("البريد الإلكتروني") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
         OutlinedTextField(userId, { userId = it }, Modifier.fillMaxWidth().traceElement("C20.USER_ID"), label = { Text("معرّف المستخدم") }, singleLine = true)
         AuthFeedback(state, vm)
-        Button(onClick = { vm.requestRecovery(name, email, userId) }, enabled = !state.authBusy && vm.isConfigured(),
-            Modifier.fillMaxWidth().traceElement("C20.SUBMIT")) {
+        Button(onClick = { vm.requestRecovery(name, email, userId) }, modifier = Modifier.fillMaxWidth().traceElement("C20.SUBMIT"),
+            enabled = !state.authBusy && vm.isConfigured()) {
             if (state.authBusy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp) else Text("إرسال تعليمات الاستعادة")
         }
         TextButton(onClick = { vm.navigate(CustomerScreen.LOGIN) }) { Text("العودة إلى تسجيل الدخول") }
@@ -217,7 +218,7 @@ private fun RecoveryScreen(state: CustomerUiState, vm: CustomerViewModel) {
 }
 
 @Composable
-private fun AuthScaffold(title: String, screenId: String, content: @Composable () -> Unit) {
+private fun AuthScaffold(title: String, screenId: String, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 22.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text("AMAN | أمان", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black,

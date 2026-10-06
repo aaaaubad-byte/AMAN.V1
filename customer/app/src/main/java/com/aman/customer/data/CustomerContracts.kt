@@ -114,7 +114,7 @@ data class ProtectionQuote(val units: Int, val durationDays: Int, val pointsCost
 /** Customer selects whole admin-defined units; days and points are both server-configured per unit. */
 fun calculateProtectionQuote(unitDays: Int, pointsPerUnit: Long, units: Int): ProtectionQuote? {
     if (unitDays <= 0 || pointsPerUnit <= 0 || units !in 1..120) return null
-    val days = runCatching { Math.multiplyExact(unitDays, units) }.getOrNull() ?: return null
+    val days = runCatching { Math.multiplyExact(unitDays, units) }.getOrNull()?.takeIf { it <= 3_650_000 } ?: return null
     val points = runCatching { Math.multiplyExact(pointsPerUnit, units.toLong()) }.getOrNull() ?: return null
     return ProtectionQuote(units, days, points)
 }

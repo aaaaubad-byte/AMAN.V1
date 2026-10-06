@@ -213,8 +213,8 @@ private fun AddNumberScreen(data: CustomerScreenData, state: CustomerUiState, vm
         match != null -> Text("الشركة: ${match.first} · البادئة: ${match.second}", color = MaterialTheme.colorScheme.primary)
         else -> NoticeBanner("لم تُكتشف شركة من البادئات النشطة المتاحة.", true)
     }
-    Button(onClick = { confirmSave = true }, enabled = !state.mutationBusy && normalized != null && !alreadyOwned && match != null,
-        Modifier.fillMaxWidth().traceElement(if (editId.isBlank()) "C05.ADD" else "C05.UPDATE")) {
+    Button(onClick = { confirmSave = true }, modifier = Modifier.fillMaxWidth().traceElement(if (editId.isBlank()) "C05.ADD" else "C05.UPDATE"),
+        enabled = !state.mutationBusy && normalized != null && !alreadyOwned && match != null) {
         Text(if (editId.isBlank()) "إضافة الرقم" else "حفظ تعديل الرقم")
     }
     if (editId.isNotBlank()) TextButton(onClick = { vm.navigate(CustomerScreen.ADDED_NUMBERS) }) { Text("إلغاء التعديل") }
@@ -245,12 +245,20 @@ private fun BuyPointsScreen(data: CustomerScreenData, state: CustomerUiState, vm
     var packageId by rememberSaveable { mutableStateOf("") }
     var methodId by rememberSaveable { mutableStateOf("") }
     var reference by rememberSaveable { mutableStateOf("") }
+    var packageQuery by rememberSaveable { mutableStateOf("") }
+    var purchaseQuery by rememberSaveable { mutableStateOf("") }
+    var purchaseStatus by rememberSaveable { mutableStateOf("الكل") }
     var confirm by remember { mutableStateOf(false) }
-    val packages = data.related.array("packages").objects()
+    val packages = data.related.array("packages").objects().filter { (it.optString("name") + it.optString("description")).contains(packageQuery.trim(), true) }
+    val purchases = data.related.array("purchases").objects().filter { row ->
+        (row.optString("public_purchase_code") + row.optString("status") + row.optString("submitted_at")).contains(purchaseQuery.trim(), true) &&
+            (purchaseStatus == "الكل" || row.optString("status").equals(when (purchaseStatus) { "قيد المراجعة" -> "PENDING"; "معتمد" -> "APPROVED"; else -> "REJECTED" }, true))
+    }
     val methods = data.related.array("methods").objects()
     SectionTitle("شراء النقاط", "يُنشأ الطلب بحالة PENDING. لا يُضاف الرصيد قبل اعتماد الطلب من الإدارة.")
     val balance = data.related.array("balance").optJSONObject(0)?.let { it.opt("balance") ?: it.opt("balance_points") }?.toString().orEmpty()
     KeyValue("الرصيد الحالي", if (balance.isBlank()) "غير متاح" else "$balance نقطة")
+    OutlinedTextField(packageQuery, { packageQuery = it }, Modifier.fillMaxWidth().traceElement("C06.PACKAGE_SEARCH"), label = { Text("بحث في الباقات") }, singleLine = true)
     JsonItemMenu("الباقة", packages, packageId, { row -> "${row.optString("name")} · ${row.optString("points")} نقطة · ${row.optString("price")} ${row.optString("currency")}" }, { packageId = it.optString("id") }, "C06.PACKAGE")
     JsonItemMenu("وسيلة الدفع", methods, methodId, { it.optString("name") }, { methodId = it.optString("id") }, "C06.METHOD")
     methods.firstOrNull { it.optString("id") == methodId }?.let { method ->
@@ -258,12 +266,14 @@ private fun BuyPointsScreen(data: CustomerScreenData, state: CustomerUiState, vm
         if (method.optString("receiving_account").isNotBlank()) KeyValue("بيانات الاستلام", method.optString("receiving_account"))
     }
     OutlinedTextField(reference, { reference = it }, Modifier.fillMaxWidth().traceElement("C06.REFERENCE"), label = { Text("مرجع التحويل") }, singleLine = true)
-    Button(onClick = { confirm = true }, enabled = !state.mutationBusy && packageId.isNotBlank() && methodId.isNotBlank() && reference.isNotBlank() && vm.online(),
-        Modifier.fillMaxWidth().traceElement("C06.SUBMIT")) { Text("مراجعة وإرسال الطلب") }
+    Button(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth().traceElement("C06.SUBMIT"),
+        enabled = !state.mutationBusy && packageId.isNotBlank() && methodId.isNotBlank() && reference.isNotBlank() && vm.online()) { Text("مراجعة وإرسال الطلب") }
     if (packages.isEmpty() || methods.isEmpty()) EmptyPanel("لا تتوفر باقات أو وسائل دفع نشطة.")
     SectionTitle("طلبات الشراء")
-    if (data.related.array("purchases").length() == 0) EmptyPanel("لا توجد طلبات شراء مسجلة.")
-    data.related.array("purchases").objects().forEach { row -> DataCard(toCustomerRecord("points_purchase", row), traceId = "C06.PURCHASES") }
+    OutlinedTextField(purchaseQuery, { purchaseQuery = it }, Modifier.fillMaxWidth().traceElement("C06.PURCHASE_SEARCH"), label = { Text("بحث في الطلبات") }, singleLine = true)
+    SimpleMenu("حالة الطلب", listOf("الكل", "قيد المراجعة", "معتمد", "مرفوض"), purchaseStatus, { purchaseStatus = it }, "C06.PURCHASE_FILTER")
+    if (purchases.isEmpty()) EmptyPanel(if (data.related.array("purchases").length() == 0) "لا توجد طلبات شراء مسجلة." else "لا توجد طلبات مطابقة.")
+    purchases.forEach { row -> DataCard(toCustomerRecord("points_purchase", row), traceId = "C06.PURCHASES") }
     if (confirm) ConfirmAction("تأكيد طلب شراء النقاط؟", "تأكد من إتمام التحويل خارجيًا. الطلب لا يضيف نقاطًا إلا بعد الاعتماد.",
         { confirm = false }, { confirm = false; vm.submitPurchase(packageId, methodId, reference) }, state.mutationBusy)
 }
@@ -302,12 +312,14 @@ private fun PointsHistoryScreen(data: CustomerScreenData) {
 @Composable
 private fun AddedNumbersScreen(data: CustomerScreenData, vm: CustomerViewModel) {
     var query by rememberSaveable { mutableStateOf("") }
-    val rows = data.related.array("numbers").objects().filter {
-        (it.optString("display_phone") + it.optString("public_added_number_code") + it.optString("status")).contains(query.trim(), true)
+    var statusFilter by rememberSaveable { mutableStateOf("الكل") }
+    val rows = data.related.array("numbers").objects().filter { row ->
+        (row.optString("display_phone") + row.optString("public_added_number_code") + row.optString("status")).contains(query.trim(), true) &&
+            (statusFilter == "الكل" || row.optString("status").equals(when (statusFilter) { "نشط" -> "ACTIVE"; "مؤرشف" -> "ARCHIVED"; else -> "INACTIVE" }, true))
     }
     SectionTitle("الأرقام المضافة", "قائمة قراءة فقط؛ التعديل والأرشفة والتفعيل تتم من الإجراء المرتبط بالسجل.")
     OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().traceElement("C08.SEARCH"), label = { Text("بحث في الأرقام") }, singleLine = true)
-    SimpleMenu("الحالة", listOf("الكل", "نشط", "مؤرشف"), "الكل", {}, "C08.FILTER")
+    SimpleMenu("الحالة", listOf("الكل", "نشط", "غير نشط", "مؤرشف"), statusFilter, { statusFilter = it }, "C08.FILTER")
     if (rows.isEmpty()) EmptyPanel(if (data.related.array("numbers").length() == 0) "لا توجد أرقام مضافة." else "لا توجد نتائج مطابقة.")
     rows.forEach { row ->
         DataCard(toCustomerRecord("customer_number", row), traceId = "C08.LIST")
@@ -321,14 +333,17 @@ private fun AddedNumbersScreen(data: CustomerScreenData, vm: CustomerViewModel) 
 @Composable
 private fun ProtectionListScreen(data: CustomerScreenData, vm: CustomerViewModel, expired: Boolean) {
     var query by rememberSaveable(expired) { mutableStateOf("") }
-    val key = if (expired) "منتهٍ" else "نشط"
+    var companyFilter by rememberSaveable(expired) { mutableStateOf("كل الشركات") }
+    val allRows = data.related.array("protections").objects().filter { it.optString("effective_status").equals(if (expired) "EXPIRED" else "ACTIVE", true) }
+    val companies = allRows.map { it.optString("company_name").ifBlank { "غير محددة" } }.distinct().sorted()
     val rows = data.related.array("protections").objects().filter { row ->
         row.optString("effective_status").equals(if (expired) "EXPIRED" else "ACTIVE", true) &&
-            (row.optString("display_phone") + row.optString("company_name") + row.optString("public_activation_code")).contains(query.trim(), true)
+            (row.optString("display_phone") + row.optString("company_name") + row.optString("public_activation_code")).contains(query.trim(), true) &&
+            (companyFilter == "كل الشركات" || row.optString("company_name").ifBlank { "غير محددة" } == companyFilter)
     }
     SectionTitle(if (expired) "الأرقام المنتهية" else "الأرقام النشطة", "الحالة وتاريخ الانتهاء مصدرهما الخادم.")
     OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().traceElement(if (expired) "C10.SEARCH" else "C09.SEARCH"), label = { Text("بحث") }, singleLine = true)
-    SimpleMenu("الحالة", listOf("$key", "الكل"), key, {}, if (expired) "C10.FILTER" else "C09.FILTER")
+    SimpleMenu("شركة الاتصالات", listOf("كل الشركات") + companies, companyFilter, { companyFilter = it }, if (expired) "C10.FILTER" else "C09.FILTER")
     if (rows.isEmpty()) EmptyPanel(if (expired) "لا توجد حماية منتهية." else "لا توجد حماية نشطة.")
     rows.forEach { row ->
         DataCard(toCustomerRecord("protection_period", row), traceId = if (expired) "C10.LIST" else "C09.LIST")
@@ -346,10 +361,12 @@ private fun ProtectionActionScreen(data: CustomerScreenData, state: CustomerUiSt
     val isExtension = mode == CustomerScreen.EXTEND
     val code = mode.id
     val chosenId = if (isActivation) vm.selectedCustomerNumberId.orEmpty() else vm.selectedProtectionPeriodId.orEmpty()
+    var targetQuery by rememberSaveable(code) { mutableStateOf("") }
     val candidates = data.related.array(if (isActivation) "candidates" else "protections").objects()
         .filter { row ->
             if (isActivation) true else row.optString("effective_status").equals(if (isExtension) "ACTIVE" else "EXPIRED", true)
         }
+        .filter { row -> (row.optString("display_phone") + row.optString("company_name") + row.optString("public_activation_code")).contains(targetQuery.trim(), true) }
     var targetId by rememberSaveable(code) { mutableStateOf(chosenId) }
     var tariffId by rememberSaveable(code) { mutableStateOf("") }
     var units by rememberSaveable(code) { mutableStateOf("1") }
@@ -374,12 +391,13 @@ private fun ProtectionActionScreen(data: CustomerScreenData, state: CustomerUiSt
     }
     val title = when (mode) { CustomerScreen.ACTIVATE -> "تفعيل الحماية"; CustomerScreen.EXTEND -> "تمديد الحماية"; else -> "تجديد الحماية" }
     SectionTitle(title, "تختار عدد وحدات كاملة فقط؛ الأيام والتكلفة تُحسب من تعرفة الشركة المحفوظة على الخادم.")
-    if (candidates.isEmpty()) EmptyPanel(when (mode) {
+    if (candidates.isEmpty()) EmptyPanel(if (targetQuery.isNotBlank()) "لا توجد نتائج مطابقة للبحث." else when (mode) {
         CustomerScreen.ACTIVATE -> "لا توجد أرقام مؤهلة للتفعيل. أضف رقمًا أولًا، وتأكد من أهلية الحساب."
         CustomerScreen.EXTEND -> "لا توجد حماية نشطة مؤهلة للتمديد."
         else -> "لا توجد حماية منتهية مؤهلة للتجديد."
     })
     if (candidates.isNotEmpty()) {
+        OutlinedTextField(targetQuery, { targetQuery = it }, Modifier.fillMaxWidth().traceElement("$code.TARGET_SEARCH"), label = { Text("بحث في الأرقام") }, singleLine = true)
         JsonItemMenu(if (isActivation) "رقم غير محمي" else "فترة الحماية", candidates,
             targetId, { row -> row.optString("display_phone").ifBlank { row.optString("public_activation_code") } + " · " + row.optString("company_name") },
             { row -> targetId = row.optString(if (isActivation) "customer_number_id" else "id") }, "$code.TARGET")
@@ -405,7 +423,7 @@ private fun ProtectionActionScreen(data: CustomerScreenData, state: CustomerUiSt
         if (cost != null && balance >= 0 && cost > balance) NoticeBanner("رصيد النقاط غير كافٍ؛ لم يُرسل أي طلب خصم.", true)
         val ready = !state.mutationBusy && targetId.isNotBlank() && tariff?.optString("id").orEmpty().isNotBlank() &&
             unitCount != null && durationDays != null && cost != null && balance >= cost && vm.online()
-        Button(onClick = { confirm = true }, enabled = ready, Modifier.fillMaxWidth().traceElement("$code.CONFIRM")) { Text("${title} · مراجعة التكلفة") }
+        Button(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth().traceElement("$code.CONFIRM"), enabled = ready) { Text("${title} · مراجعة التكلفة") }
         if (confirm) ConfirmAction(
             "تأكيد $title؟",
             "الوحدة ${tariff?.optString("tariff_mode")} · $unitCount وحدة · $durationDays يوم · $cost نقطة. سيعيد الخادم التحقق من التعرفة والرصيد والملكية قبل أي تغيير.",
@@ -425,9 +443,14 @@ private fun ProtectionActionScreen(data: CustomerScreenData, state: CustomerUiSt
 @Composable
 private fun NotificationsScreen(data: CustomerScreenData, vm: CustomerViewModel) {
     var query by rememberSaveable { mutableStateOf("") }
-    val rows = data.related.array("notifications").objects().filter { (it.optString("title") + it.optString("body")).contains(query.trim(), true) }
+    var readFilter by rememberSaveable { mutableStateOf("الكل") }
+    val rows = data.related.array("notifications").objects().filter { row ->
+        (row.optString("title") + row.optString("body")).contains(query.trim(), true) &&
+            (readFilter == "الكل" || row.optBoolean("is_read", false) == (readFilter == "مقروء"))
+    }
     SectionTitle("إشعارات النظام", "كل إشعار يشير إلى مصدره التجاري ولا يحل محله.")
     OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().traceElement("C14.SEARCH"), label = { Text("بحث في الإشعارات") }, singleLine = true)
+    SimpleMenu("حالة القراءة", listOf("الكل", "مقروء", "غير مقروء"), readFilter, { readFilter = it }, "C14.FILTER")
     if (rows.isEmpty()) EmptyPanel("لا توجد إشعارات مطابقة.")
     rows.forEach { row ->
         DataCard(toCustomerRecord("customer_notification", row), traceId = "C14.LIST")
@@ -441,8 +464,21 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
     var newConversation by rememberSaveable { mutableStateOf(false) }
     var subject by rememberSaveable { mutableStateOf("") }
     var body by rememberSaveable { mutableStateOf("") }
+    var threadQuery by rememberSaveable { mutableStateOf("") }
+    var threadStatus by rememberSaveable { mutableStateOf("الكل") }
     val messages = data.related.array("messages").objects()
     val thread = data.related.array("threads").objects().firstOrNull { it.optString("id") == selectedId }
+    val threadRows = data.related.array("threads").objects().filter { row ->
+        (row.optString("subject") + row.optString("status") + row.optString("id")).contains(threadQuery.trim(), true) &&
+            (threadStatus == "الكل" || row.optString("status").equals(if (threadStatus == "مفتوحة") "OPEN" else "CLOSED", true))
+    }
+    LaunchedEffect(state.mutationMessage) {
+        when (state.mutationMessage) {
+            "تم إنشاء المحادثة وإرسال الرسالة الأولى." -> { newConversation = false; subject = ""; body = "" }
+            "تم إرسال الرسالة إلى المحادثة." -> body = ""
+            "تم إغلاق المحادثة." -> selectedId = ""
+        }
+    }
     SectionTitle("تواصل أمان", "الدعم ورسائل الإدارة قناتان مختلفتان عن إشعارات النظام.")
     val inbox = data.related.array("admin_messages").objects()
     if (inbox.isNotEmpty()) {
@@ -453,11 +489,18 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
         }
     }
     OutlinedButton(onClick = { vm.load(CustomerScreen.SUPPORT) }, Modifier.fillMaxWidth(), enabled = !state.mutationBusy) { Text("تحديث المحادثات والرسائل") }
-    if (!newConversation && data.related.array("threads").length() > 0) {
+    if (!newConversation && threadRows.isNotEmpty()) {
         SectionTitle("محادثات الدعم")
-        data.related.array("threads").objects().forEach { row ->
+        OutlinedTextField(threadQuery, { threadQuery = it }, Modifier.fillMaxWidth().traceElement("C15.THREAD_SEARCH"), label = { Text("بحث في المحادثات") }, singleLine = true)
+        SimpleMenu("حالة المحادثة", listOf("الكل", "مفتوحة", "مغلقة"), threadStatus, { threadStatus = it }, "C15.THREAD_FILTER")
+        threadRows.forEach { row ->
             DataCard(toCustomerRecord("support_conversation", row), traceId = "C15.THREADS", onClick = { selectedId = row.optString("id"); newConversation = false })
         }
+        OutlinedButton(onClick = { selectedId = ""; newConversation = true; subject = ""; body = "" }) { Text("طلب دعم جديد") }
+    } else if (!newConversation && data.related.array("threads").length() > 0) {
+        OutlinedTextField(threadQuery, { threadQuery = it }, Modifier.fillMaxWidth().traceElement("C15.THREAD_SEARCH"), label = { Text("بحث في المحادثات") }, singleLine = true)
+        SimpleMenu("حالة المحادثة", listOf("الكل", "مفتوحة", "مغلقة"), threadStatus, { threadStatus = it }, "C15.THREAD_FILTER")
+        EmptyPanel("لا توجد محادثات مطابقة.")
         OutlinedButton(onClick = { selectedId = ""; newConversation = true; subject = ""; body = "" }) { Text("طلب دعم جديد") }
     } else if (!newConversation) {
         EmptyPanel("لا توجد محادثات دعم. يمكنك بدء طلب جديد.")
@@ -477,7 +520,7 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
             }
         }
         if (thread.optString("status").equals("OPEN", true)) {
-            TextButton(onClick = { vm.closeSupportConversation(selectedId); selectedId = "" }) { Text("إغلاق المحادثة") }
+            TextButton(onClick = { vm.closeSupportConversation(selectedId) }) { Text("إغلاق المحادثة") }
         } else NoticeBanner("المحادثة مغلقة ولا يمكن إرسال رد جديد.", true)
     }
     if (newConversation) OutlinedTextField(subject, { subject = it }, Modifier.fillMaxWidth().traceElement("C15.SUBJECT"), label = { Text("موضوع الطلب") }, singleLine = true)
@@ -485,9 +528,8 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
         OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth().height(130.dp).traceElement("C15.MESSAGE"), label = { Text(if (newConversation) "الرسالة" else "الرد") })
         Button(onClick = {
             if (newConversation) vm.createSupportConversation(subject, body) else vm.sendSupportMessage(selectedId, body)
-            body = ""
-        }, enabled = !state.mutationBusy && vm.online() && body.isNotBlank() && (!newConversation || subject.isNotBlank()),
-            Modifier.fillMaxWidth().traceElement("C15.SEND")) { Text("إرسال") }
+        }, modifier = Modifier.fillMaxWidth().traceElement("C15.SEND"),
+            enabled = !state.mutationBusy && vm.online() && body.isNotBlank() && (!newConversation || subject.isNotBlank())) { Text("إرسال") }
     }
 }
 
@@ -563,8 +605,8 @@ private fun ReportsScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
             if (row.details.isNotBlank()) Text(row.details, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
     } }
-    OutlinedButton(onClick = { launcher.launch("aman-customer-report-${LocalDate.now()}.csv") }, enabled = !state.mutationBusy && isValidCustomerReportRange(appliedFrom, appliedTo),
-        Modifier.fillMaxWidth().traceElement("C17.EXPORT")) { Text("تصدير CSV") }
+    OutlinedButton(onClick = { launcher.launch("aman-customer-report-${LocalDate.now()}.csv") }, modifier = Modifier.fillMaxWidth().traceElement("C17.EXPORT"),
+        enabled = !state.mutationBusy && isValidCustomerReportRange(appliedFrom, appliedTo)) { Text("تصدير CSV") }
 }
 
 @Composable
@@ -587,7 +629,7 @@ private fun AccountScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
     KeyValue("نوع الحساب", profile.optString("account_type"))
     OutlinedButton(onClick = { clipboard.setText(AnnotatedString(profile.optString("public_user_code"))) }, Modifier.traceElement("C18.ID")) { Text("نسخ معرّف المستخدم") }
     OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().traceElement("C18.NAME"), label = { Text("الاسم") }, singleLine = true)
-    Button(onClick = { saveConfirm = true }, enabled = name.isNotBlank() && !state.mutationBusy, Modifier.fillMaxWidth().traceElement("C18.SAVE")) { Text("حفظ الاسم") }
+    Button(onClick = { saveConfirm = true }, modifier = Modifier.fillMaxWidth().traceElement("C18.SAVE"), enabled = name.isNotBlank() && !state.mutationBusy) { Text("حفظ الاسم") }
     if (saveConfirm) ConfirmAction("حفظ الاسم؟", "سيُحدّث الاسم المرتبط بحساب الدخول فقط.", { saveConfirm = false }, { saveConfirm = false; vm.updateProfile(name) }, state.mutationBusy)
     SectionTitle("الأمان")
     OutlinedTextField(newPassword, { newPassword = it }, Modifier.fillMaxWidth().traceElement("C18.PASSWORD"), label = { Text("كلمة مرور جديدة") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())

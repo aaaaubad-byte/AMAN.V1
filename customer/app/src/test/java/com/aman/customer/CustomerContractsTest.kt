@@ -59,12 +59,13 @@ class CustomerContractsTest {
         val quote = calculateProtectionQuote(unitDays = 30, pointsPerUnit = 120, units = 4)
         assertEquals(120, quote?.durationDays)
         assertEquals(480L, quote?.pointsCost)
-        assertEquals(7, calculateProtectionQuote(7, 7, 3)?.durationDays)
+        assertEquals(21, calculateProtectionQuote(7, 7, 3)?.durationDays)
         assertEquals(21L, calculateProtectionQuote(7, 7, 3)?.pointsCost)
         assertNull(calculateProtectionQuote(0, 120, 4))
         assertNull(calculateProtectionQuote(30, 0, 4))
         assertNull(calculateProtectionQuote(30, 120, 0))
         assertNull(calculateProtectionQuote(Int.MAX_VALUE, 120, 4))
+        assertNull(calculateProtectionQuote(30_417, 120, 120))
     }
 
     @Test fun customerTraceabilityHasUniqueValidScreenScopedIdsForAllTwentyScreens() {
