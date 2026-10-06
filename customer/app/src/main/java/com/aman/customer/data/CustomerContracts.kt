@@ -109,8 +109,15 @@ fun discoverProvider(phoneNumber: String, prefixes: List<ProviderPrefix>): Pair<
         .maxByOrNull { it.second.length }
         ?.let { it.first.providerName to it.first.prefix }
 
-fun activationCost(days: Int, rate: Long): Long? =
-    if (days <= 0 || rate <= 0) null else runCatching { Math.multiplyExact(days.toLong(), rate) }.getOrNull()
+data class ProtectionQuote(val units: Int, val durationDays: Int, val pointsCost: Long)
+
+/** Customer selects whole admin-defined units; days and points are both server-configured per unit. */
+fun calculateProtectionQuote(unitDays: Int, pointsPerUnit: Long, units: Int): ProtectionQuote? {
+    if (unitDays <= 0 || pointsPerUnit <= 0 || units !in 1..120) return null
+    val days = runCatching { Math.multiplyExact(unitDays, units) }.getOrNull() ?: return null
+    val points = runCatching { Math.multiplyExact(pointsPerUnit, units.toLong()) }.getOrNull() ?: return null
+    return ProtectionQuote(units, days, points)
+}
 
 fun toCustomerRecord(table: String, row: JSONObject): CustomerRecord {
     val phone = row.optJSONObject("phone_number") ?: row.optJSONObject("phone_numbers")

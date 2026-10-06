@@ -88,6 +88,11 @@ class SupabaseGateway(context: Context) {
         request("$baseUrl/rest/v1/rpc/$name", "POST", arguments.toString(), authenticatedToken())
     }
 
+    suspend fun publicRpc(name: String, arguments: JSONObject): String = withContext(Dispatchers.IO) {
+        if (name != "get_public_content") throw CustomerContractException("Public RPC غير معتمد: $name")
+        request("$baseUrl/rest/v1/rpc/$name", "POST", arguments.toString(), null)
+    }
+
     suspend fun signOut() = withContext(Dispatchers.IO) {
         val session = readSession()
         try {

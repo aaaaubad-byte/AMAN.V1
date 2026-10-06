@@ -24,26 +24,28 @@ class CustomerRepository(
     }
 
     suspend fun load(screen: CustomerScreen, search: String = ""): CustomerScreenData = withContext(Dispatchers.IO) {
-        val userId = gateway.currentUserId() ?: throw CustomerContractException("يلزم تسجيل الدخول لقراءة بيانات الحساب.")
+        val userId = gateway.currentUserId() ?: if (screen == CustomerScreen.ABOUT) "public" else throw CustomerContractException("يلزم تسجيل الدخول لقراءة بيانات الحساب.")
         if (screen in setOf(CustomerScreen.INITIALIZATION, CustomerScreen.LOGIN, CustomerScreen.SIGN_UP, CustomerScreen.RECOVERY)) {
             return@withContext CustomerScreenData(screen)
         }
         val payload = try {
-            JSONObject(gateway.rpc("get_customer_screen_data", JSONObject()
+            if (screen == CustomerScreen.ABOUT && userId == "public") {
+                JSONObject(gateway.publicRpc("get_public_content", JSONObject().put("p_content_key", "ALL")))
+            } else JSONObject(gateway.rpc("get_customer_screen_data", JSONObject()
                 .put("p_screen_id", screen.id)
                 .put("p_query", search.trim().take(100))))
         } catch (e: CancellationException) {
             throw e
         }
-        cache.put(userId, screen, JSONObject().put("user", userId).put("screen", screen.id).put("payload", payload))
-        build(screen, payload)
+        if (userId != "public") cache.put(userId, screen, JSONObject().put("user", userId).put("screen", screen.id).put("payload", payload))
+        build(screen, payload, search = search)
     }
 
     fun cached(screen: CustomerScreen): CustomerScreenData? {
         val userId = gateway.currentUserId() ?: return null
         val envelope = cache.get(userId, screen) ?: return null
         if (envelope.optString("user") != userId || envelope.optString("screen") != screen.id) return null
-        return envelope.optJSONObject("payload")?.let { build(screen, it, cache.syncedAt(userId, screen)) }
+        return envelope.optJSONObject("payload")?.let { build(screen, it, loadedAt = cache.syncedAt(userId, screen)) }
     }
 
     fun purchaseIdempotencyKey(packageId: String, methodId: String, reference: String): String {
@@ -131,22 +133,22 @@ class CustomerRepository(
         gateway.rpc("mark_admin_message_read", JSONObject().put("p_message_id", messageId))
     }
 
-    suspend fun activate(customerNumberId: String, days: Int, idempotencyKey: String) {
-        if (customerNumberId.isBlank() || days <= 0 || idempotencyKey.isBlank()) throw CustomerContractException("اختر رقمًا ومدة صحيحة.")
+    suspend fun activate(customerNumberId: String, tariffId: String, units: Int, idempotencyKey: String) {
+        if (customerNumberId.isBlank() || tariffId.isBlank() || units !in 1..120 || idempotencyKey.isBlank()) throw CustomerContractException("اختر رقمًا وتعرفة وعدد وحدات صحيحًا.")
         gateway.rpc("activate_protection", JSONObject().put("p_customer_number_id", customerNumberId)
-            .put("p_duration_days", days).put("p_idempotency_key", idempotencyKey))
+            .put("p_tariff_id", tariffId).put("p_units", units).put("p_idempotency_key", idempotencyKey))
     }
 
-    suspend fun extend(protectionPeriodId: String, days: Int, idempotencyKey: String) {
-        if (protectionPeriodId.isBlank() || days <= 0 || idempotencyKey.isBlank()) throw CustomerContractException("اختر حماية نشطة ومدة صحيحة.")
+    suspend fun extend(protectionPeriodId: String, tariffId: String, units: Int, idempotencyKey: String) {
+        if (protectionPeriodId.isBlank() || tariffId.isBlank() || units !in 1..120 || idempotencyKey.isBlank()) throw CustomerContractException("اختر حماية نشطة وتعرفة وعدد وحدات صحيحًا.")
         gateway.rpc("extend_protection", JSONObject().put("p_protection_period_id", protectionPeriodId)
-            .put("p_extension_days", days).put("p_idempotency_key", idempotencyKey))
+            .put("p_tariff_id", tariffId).put("p_units", units).put("p_idempotency_key", idempotencyKey))
     }
 
-    suspend fun renew(protectionPeriodId: String, days: Int, idempotencyKey: String) {
-        if (protectionPeriodId.isBlank() || days <= 0 || idempotencyKey.isBlank()) throw CustomerContractException("اختر حماية منتهية ومدة تجديد صحيحة.")
+    suspend fun renew(protectionPeriodId: String, tariffId: String, units: Int, idempotencyKey: String) {
+        if (protectionPeriodId.isBlank() || tariffId.isBlank() || units !in 1..120 || idempotencyKey.isBlank()) throw CustomerContractException("اختر حماية منتهية وتعرفة وعدد وحدات صحيحًا.")
         gateway.rpc("renew_protection", JSONObject().put("p_protection_period_id", protectionPeriodId)
-            .put("p_duration_days", days).put("p_idempotency_key", idempotencyKey))
+            .put("p_tariff_id", tariffId).put("p_units", units).put("p_idempotency_key", idempotencyKey))
     }
 
     fun mutationKey(operation: String, identity: String, days: Int): String {
@@ -161,10 +163,10 @@ class CustomerRepository(
         }
     }
 
-    private fun build(screen: CustomerScreen, payload: JSONObject, loadedAt: Long = System.currentTimeMillis()): CustomerScreenData {
+    private fun build(screen: CustomerScreen, payload: JSONObject, loadedAt: Long = System.currentTimeMillis(), search: String = ""): CustomerScreenData {
         val keys = listOf(
             "profile", "balance", "operations", "numbers", "candidates", "protections", "tariffs", "packages", "methods",
-            "purchases", "ledger", "notifications", "threads", "messages", "admin_messages", "content", "maintenance",
+            "purchases", "ledger", "notifications", "threads", "messages", "admin_messages", "content", "maintenance", "prefixes", "extensions",
         )
         val related = keys.mapNotNull { key -> payload.optJSONArray(key)?.let { key to it } }.toMap()
         val mainKey = when (screen) {
@@ -184,8 +186,9 @@ class CustomerRepository(
             else -> ""
         }
         val records = if (screen == CustomerScreen.SEARCH) {
+            val query = search.trim()
             listOf("numbers", "purchases", "ledger", "protections", "notifications", "operations")
-                .flatMap { key -> related.array(key).objects().map { toCustomerRecord(key, it) } }
+                .flatMap { key -> related.array(key).objects().filter { it.toString().contains(query, true) }.map { toCustomerRecord(key, it) } }
         } else related.array(mainKey).objects().map { toCustomerRecord(mainKey, it) }
         return CustomerScreenData(screen = screen, records = records, related = related, loadedAt = loadedAt)
     }

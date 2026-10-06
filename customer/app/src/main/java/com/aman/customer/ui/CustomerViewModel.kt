@@ -154,9 +154,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
         loadJob?.cancel()
         _state.value = current.copy(screen = screen, navigationBackStack = current.navigationBackStack + current.screen,
             mutationMessage = null, error = null, authError = null, authNotice = null)
-        if (screen == CustomerScreen.ABOUT) {
-            _state.value = _state.value.copy(phase = LoadPhase.LOADED, data = CustomerScreenData(screen), stale = false)
-        } else load(screen)
+        load(screen)
     }
 
     fun selectTab(screen: CustomerScreen) {
@@ -170,8 +168,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
         val current = _state.value
         val previous = current.navigationBackStack.lastOrNull() ?: return
         _state.value = current.copy(screen = previous, navigationBackStack = current.navigationBackStack.dropLast(1), mutationMessage = null, error = null)
-        if (previous == CustomerScreen.ABOUT) _state.value = _state.value.copy(phase = LoadPhase.LOADED, data = CustomerScreenData(previous), stale = false)
-        else load(previous)
+        load(previous)
     }
 
     fun editCustomerNumber(id: String) {
@@ -195,7 +192,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
     }
 
     fun load(screen: CustomerScreen = _state.value.screen, search: String = "") {
-        if (!gateway.hasSession() || screen in setOf(CustomerScreen.INITIALIZATION, CustomerScreen.LOGIN, CustomerScreen.SIGN_UP, CustomerScreen.RECOVERY, CustomerScreen.ABOUT)) return
+        if ((!gateway.hasSession() && screen != CustomerScreen.ABOUT) || screen in setOf(CustomerScreen.INITIALIZATION, CustomerScreen.LOGIN, CustomerScreen.SIGN_UP, CustomerScreen.RECOVERY)) return
         loadJob?.cancel()
         val cached = if (search.isBlank()) repository.cached(screen) else null
         if (!repository.isOnline()) {
@@ -247,17 +244,17 @@ class CustomerViewModel(context: Context) : ViewModel() {
     fun closeSupportConversation(id: String) = mutate("support.close", "تم إغلاق المحادثة.") { withContext(Dispatchers.IO) { repository.closeSupportConversation(id) } }
     fun updateProfile(name: String) = mutate("profile.update", "تم حفظ الاسم.") { withContext(Dispatchers.IO) { repository.updateCustomerProfile(name) } }
 
-    fun activate(customerNumberId: String, days: Int) = mutate("protection.activate", "أكد الخادم تفعيل الحماية وتسجيل العملية.") {
-        val key = withContext(Dispatchers.IO) { repository.mutationKey("activation", customerNumberId, days) }
-        withContext(Dispatchers.IO) { repository.activate(customerNumberId, days, key) }
+    fun activate(customerNumberId: String, tariffId: String, units: Int) = mutate("protection.activate", "أكد الخادم تفعيل الحماية وتسجيل العملية.") {
+        val key = withContext(Dispatchers.IO) { repository.mutationKey("activation", "$customerNumberId|$tariffId", units) }
+        withContext(Dispatchers.IO) { repository.activate(customerNumberId, tariffId, units, key) }
     }
-    fun extend(protectionId: String, days: Int) = mutate("protection.extend", "أكد الخادم تمديد الحماية وتسجيل العملية.") {
-        val key = withContext(Dispatchers.IO) { repository.mutationKey("extension", protectionId, days) }
-        withContext(Dispatchers.IO) { repository.extend(protectionId, days, key) }
+    fun extend(protectionId: String, tariffId: String, units: Int) = mutate("protection.extend", "أكد الخادم تمديد الحماية وتسجيل العملية.") {
+        val key = withContext(Dispatchers.IO) { repository.mutationKey("extension", "$protectionId|$tariffId", units) }
+        withContext(Dispatchers.IO) { repository.extend(protectionId, tariffId, units, key) }
     }
-    fun renew(protectionId: String, days: Int) = mutate("protection.renew", "أكد الخادم تجديد الحماية وتسجيل العملية.") {
-        val key = withContext(Dispatchers.IO) { repository.mutationKey("renewal", protectionId, days) }
-        withContext(Dispatchers.IO) { repository.renew(protectionId, days, key) }
+    fun renew(protectionId: String, tariffId: String, units: Int) = mutate("protection.renew", "أكد الخادم تجديد الحماية وتسجيل العملية.") {
+        val key = withContext(Dispatchers.IO) { repository.mutationKey("renewal", "$protectionId|$tariffId", units) }
+        withContext(Dispatchers.IO) { repository.renew(protectionId, tariffId, units, key) }
     }
 
     fun updatePassword(password: String, confirmation: String) {
@@ -301,7 +298,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
     }
 
     private fun isAllowedDestination(screen: CustomerScreen) =
-        _state.value.authenticated || screen in setOf(CustomerScreen.LOGIN, CustomerScreen.SIGN_UP, CustomerScreen.RECOVERY)
+        _state.value.authenticated || screen in setOf(CustomerScreen.LOGIN, CustomerScreen.SIGN_UP, CustomerScreen.RECOVERY, CustomerScreen.ABOUT)
 
     private fun isSessionExpired(error: Throwable): Boolean {
         val message = error.message.orEmpty()

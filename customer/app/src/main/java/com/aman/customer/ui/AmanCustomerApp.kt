@@ -63,6 +63,10 @@ fun AmanCustomerApp(context: Context) {
             CustomerScreen.INITIALIZATION -> InitializationScreen()
             CustomerScreen.SIGN_UP -> SignUpScreen(state, vm)
             CustomerScreen.RECOVERY -> RecoveryScreen(state, vm)
+            CustomerScreen.ABOUT -> {
+                TextButton(onClick = { vm.back() }, modifier = Modifier.traceElement("C19.GUEST.BACK")) { Text("عودة") }
+                CustomerScreenContent(state, vm, Modifier.fillMaxSize())
+            }
             else -> LoginScreen(state, vm)
         }
         return
