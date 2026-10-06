@@ -112,7 +112,7 @@ fun AdminApp(viewModel: AdminViewModel) {
         when {
             state.checkingSession -> CenterProgress("التحقق من الجلسة…")
             !state.authenticated -> LoginScreen(state.email, state.busy, state.error, state.notice, viewModel.configurationMessage,
-                viewModel::updateEmail, viewModel::signIn, viewModel::recoverPassword, viewModel::registerAuthIdentity, viewModel::clearMessages)
+                viewModel::updateEmail, viewModel::signIn, viewModel::recoverPassword, viewModel::clearMessages)
             else -> AdminShell(state, viewModel)
         }
     }
@@ -120,10 +120,8 @@ fun AdminApp(viewModel: AdminViewModel) {
 
 @Composable
 private fun LoginScreen(email: String, busy: Boolean, error: String?, notice: String?, configMessage: String?, onEmail: (String) -> Unit,
-                       onSignIn: (String) -> Unit, onRecover: () -> Unit, onRegister: (String) -> Unit, onDismiss: () -> Unit) {
+                       onSignIn: (String) -> Unit, onRecover: () -> Unit, onDismiss: () -> Unit) {
     var password by rememberSaveable { mutableStateOf("") }
-    var registrationPassword by rememberSaveable { mutableStateOf("") }
-    var showRegistration by rememberSaveable { mutableStateOf(false) }
     var showSetup by rememberSaveable { mutableStateOf(false) }
     if (showSetup) AlertDialog(onDismissRequest = { showSetup = false }, title = { Text("A16 — فحص تهيئة التطبيق") },
         text = { Text(configMessage ?: "تم إعداد عنوان Supabase والمفتاح العام. بعد تسجيل الدخول يتحقق التطبيق من admin_identity والدور والصلاحيات من Backend.") },
@@ -135,22 +133,6 @@ private fun LoginScreen(email: String, busy: Boolean, error: String?, notice: St
         }
         Spacer(Modifier.height(18.dp))
         Text("AMAN | أمان", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        if (showRegistration) {
-            Text("A18 — إنشاء الهوية", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
-            OutlinedTextField(value = email, onValueChange = onEmail, modifier = Modifier.fillMaxWidth(), label = { Text("البريد الإلكتروني") },
-                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(value = registrationPassword, onValueChange = { registrationPassword = it }, modifier = Modifier.fillMaxWidth(), label = { Text("كلمة المرور (6 أحرف على الأقل)") },
-                singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-            Text("التسجيل ينشئ هوية Auth فقط. لا ينشئ admin_identity ولا يعيّن دورًا أو صلاحية؛ يحتاج دخول الإدارة إلى تعيين مخوّل.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 12.dp))
-            if (error != null) MessageCard(error, true, onDismiss, Modifier.padding(top = 14.dp))
-            if (notice != null) MessageCard(notice, false, modifier = Modifier.padding(top = 14.dp))
-            Button(onClick = { onRegister(registrationPassword) }, enabled = !busy, modifier = Modifier.fillMaxWidth().padding(top = 18.dp).height(52.dp), shape = RoundedCornerShape(14.dp)) {
-                if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary) else Text("إنشاء هوية Auth")
-            }
-            TextButton(onClick = { showRegistration = false; registrationPassword = "" }) { Text("العودة إلى A17") }
-        } else {
         Text("تسجيل دخول الإدارة", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
         OutlinedTextField(value = email, onValueChange = onEmail, modifier = Modifier.fillMaxWidth(), label = { Text("البريد الإلكتروني") },
             singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
@@ -168,10 +150,8 @@ private fun LoginScreen(email: String, busy: Boolean, error: String?, notice: St
             color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 16.dp))
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             TextButton(onClick = onRecover, enabled = !busy) { Text("A19 — نسيت كلمة المرور؟") }
-            TextButton(onClick = { showRegistration = true }, enabled = !busy) { Text("A18 — طلب إدارة") }
         }
         TextButton(onClick = { showSetup = true }) { Text("A16 — فحص التهيئة") }
-        }
     }
 }
 
@@ -356,6 +336,14 @@ private fun RecordSectionScreen(state: AdminUiState, viewModel: AdminViewModel) 
             }) { Text(if (state.section == AdminSection.FINANCE) "تسجيل مصروف" else if (state.section == AdminSection.TASK_SETTINGS) "إضافة إصدار إعداد" else "إضافة") }
             if (state.relatedKind != null) TextButton(onClick = viewModel::closeRelated) { Text("العودة للقائمة") }
         }
+        if (state.relatedKind == null && (state.pageIndex > 0 || state.pageHasMore)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { viewModel.setPage(state.pageIndex - 1) }, enabled = state.pageIndex > 0) { Text("السابق") }
+                Text("صفحة ${state.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { viewModel.setPage(state.pageIndex + 1) }, enabled = state.pageHasMore) { Text("التالي") }
+            }
+        }
         when {
             state.loading -> CenterProgress("تحميل ${state.section.title}…", Modifier.weight(1f).fillMaxWidth())
             rowsForList.isEmpty() && state.error == null -> EmptyState(if (state.section == AdminSection.SEARCH && state.searchText.isBlank()) "أدخل كلمة بحث للعثور على السجلات التي تسمح صلاحيتك برؤيتها." else "لا توجد سجلات مطابقة في المصدر.", Modifier.weight(1f).fillMaxWidth())
@@ -455,7 +443,10 @@ private fun SelectedPanel(state: AdminUiState, viewModel: AdminViewModel, row: J
                     AdminSection.TASK_SETTINGS -> if (viewModel.can(AdminPermissions.TASKS_SETTINGS)) OutlinedButton(onClick = { viewModel.startForm(AdminFormKind.TASK_SETTINGS, row) }, enabled = canMutate) { Text("إضافة إصدار إعدادات مهام") }
                     AdminSection.COMMUNICATIONS -> {
                         RelatedButtons(listOf(RelatedListKind.SUPPORT_MESSAGES), viewModel)
-                        if (row.optString("status").equals("OPEN", true) && viewModel.can(AdminPermissions.SUPPORT_READ)) {
+                        if (row.optString("request_status") == "PENDING" && viewModel.can(AdminPermissions.SUPPORT_READ)) {
+                            OutlinedButton(onClick = { onActionRequest(AdminMutation.APPROVE_SUPPORT_REQUEST, "") }, enabled = canMutate) { Text("اعتماد طلب الدعم") }
+                        }
+                        if (row.optString("request_status").let { it.isBlank() || it == "APPROVED" } && row.optString("status").equals("OPEN", true) && viewModel.can(AdminPermissions.SUPPORT_READ)) {
                             OutlinedButton(onClick = { onActionRequest(AdminMutation.SEND_SUPPORT_REPLY, "") }, enabled = canMutate) { Text("الرد على المحادثة") }
                             OutlinedButton(onClick = { onActionRequest(AdminMutation.CLOSE_SUPPORT, "تم الإغلاق من الإدارة") }, enabled = canMutate) { Text("إغلاق المحادثة") }
                         }
@@ -651,7 +642,7 @@ private fun DisplayFields(section: AdminSection, row: JSONObject) {
     val keys = when (section) {
         AdminSection.SUBSCRIBERS, AdminSection.USERS -> listOf("name", "email", "public_user_code", "account_type", "account_status", "balance_points", "number_count", "protection_count", "public_subscriber_code", "activated_at", "created_at")
         AdminSection.ADDED_NUMBERS -> listOf("display_phone", "provider_name", "customer_name", "public_added_number_code", "status", "added_at")
-        AdminSection.ACTIVE_NUMBERS -> listOf("phone_e164", "customer_name", "provider_name", "status", "start_at", "end_at", "duration_unit_days_snapshot", "points_per_unit_snapshot", "units_snapshot", "points_cost_snapshot", "remaining_days")
+        AdminSection.ACTIVE_NUMBERS -> listOf("phone_e164", "customer_name", "provider_name", "status", "start_at", "end_at", "duration_unit_days_snapshot", "points_per_unit_snapshot", "units_snapshot", "points_cost_snapshot", "remaining_days", "extension_warning_days", "needs_extension")
         AdminSection.PURCHASES -> listOf("public_purchase_code", "customer_name", "package_name_snapshot", "points_snapshot", "price_snapshot", "currency_snapshot", "payment_method_name_snapshot", "payment_method_details_snapshot", "transfer_reference", "submitted_at", "status", "rejection_reason")
         AdminSection.PAYMENT_TASKS, AdminSection.PERIODIC_PAYMENT -> listOf("public_task_code", "phone_e164", "customer_name", "company_snapshot", "due_at", "amount", "currency", "task_attention", "status", "execution_reference")
         AdminSection.TASK_PLANS -> listOf("protection_period_id", "task_configuration_id", "status", "anchor_at", "version", "created_at", "updated_at")
@@ -793,6 +784,7 @@ private fun actionTitle(action: AdminMutation) = when (action) {
     AdminMutation.RESCHEDULE_PAYMENT_TASK -> "إعادة جدولة المهمة"
     AdminMutation.CANCEL_PAYMENT_TASK -> "إلغاء المهمة"
     AdminMutation.SEND_SUPPORT_REPLY -> "إرسال رد الدعم"
+    AdminMutation.APPROVE_SUPPORT_REQUEST -> "اعتماد طلب الدعم"
     AdminMutation.CLOSE_SUPPORT -> "إغلاق محادثة الدعم"
     else -> "تأكيد الإجراء"
 }
@@ -812,6 +804,7 @@ private fun actionExplanation(action: AdminMutation, row: JSONObject?) = when (a
     AdminMutation.RESCHEDULE_PAYMENT_TASK -> "يجب أن يكون الموعد مستقبلًا وضمن فترة الحماية. لا نفترض إعادة بناء خطة المهام؛ GAP-DB-016 ما زال مفتوحًا."
     AdminMutation.CANCEL_PAYMENT_TASK -> "سيُلغي Backend المهمة المفتوحة ويسجل سبب الإلغاء والتدقيق."
     AdminMutation.SEND_SUPPORT_REPLY -> "سيظهر الرد للعميل في سجل المحادثة باسم حساب الإدارة المسجل."
+    AdminMutation.APPROVE_SUPPORT_REQUEST -> "سيعتمد Backend الطلب ويفتح المحادثة ويضيف إشعارًا للعميل ويسجل التدقيق."
     AdminMutation.CLOSE_SUPPORT -> "سيغلق Backend المحادثة المفتوحة مع حفظ السبب والتدقيق."
     else -> "سيتحقق Backend من الصلاحيات والحالة ويسجل الأثر."
 }
@@ -824,7 +817,7 @@ private fun formTitle(kind: AdminFormKind) = when (kind) {
 private fun formContractNote(kind: AdminFormKind) = when (kind) {
     AdminFormKind.PREFIX -> "الإضافة والتعديل والحالة عبر admin_save_telecom_prefix، مع تدقيق الخادم. لا حذف صلب."
     AdminFormKind.TARIFF -> "تُحفظ أيام الوحدة وسعرها بالنقاط مع القيمة النقدية والعملة المطلوبة في V11. خصم العميل يعتمد نقاط الوحدة فقط؛ أدخل وقتًا ISO-8601."
-    AdminFormKind.PROVIDER -> "حفظ company/code/name/status عبر admin_save_telecom_company مع سجل تدقيق."
+    AdminFormKind.PROVIDER -> "يحفظ أيام تنبيه العميل قبل انتهاء الحماية ضمن إعداد الشركة، عبر Backend مع سجل تدقيق."
     AdminFormKind.USER -> "تحديث customer_profile عبر admin_update_customer_profile؛ لا يغير هوية الدخول ولا ينشئ دورًا."
     AdminFormKind.PACKAGE -> "تُحفظ النقاط والسعر والظهور والتفعيل في أعمدة points_package الفعلية."
     AdminFormKind.PAYMENT_METHOD -> "تُحفظ وسيلة الدفع في أعمدتها الفعلية receiving_account وtransfer_instructions وغيرها."
@@ -834,7 +827,7 @@ private fun formContractNote(kind: AdminFormKind) = when (kind) {
 private data class FieldSpec(val key: String, val label: String, val keyboard: KeyboardType = KeyboardType.Text)
 private fun formFields(kind: AdminFormKind): List<FieldSpec> = when (kind) {
     AdminFormKind.USER -> listOf(FieldSpec("name", "الاسم"), FieldSpec("email", "البريد"), FieldSpec("account_status", "حالة الحساب"), FieldSpec("reason", "سبب التغيير"))
-    AdminFormKind.PROVIDER -> listOf(FieldSpec("code", "رمز الشركة"), FieldSpec("name", "الاسم"), FieldSpec("status", "الحالة"))
+    AdminFormKind.PROVIDER -> listOf(FieldSpec("code", "رمز الشركة"), FieldSpec("name", "الاسم"), FieldSpec("status", "الحالة"), FieldSpec("extension_warning_days", "أيام التحذير قبل الانتهاء", KeyboardType.Number))
     AdminFormKind.PREFIX -> listOf(FieldSpec("prefix", "البادئة (أرقام)"), FieldSpec("status", "الحالة"))
     AdminFormKind.TARIFF -> listOf(FieldSpec("tariff_mode", "وحدة التعرفة"), FieldSpec("duration_unit_days", "أيام الوحدة", KeyboardType.Number), FieldSpec("points_per_unit", "نقاط لكل وحدة", KeyboardType.Number), FieldSpec("rate", "القيمة النقدية للوحدة", KeyboardType.Decimal), FieldSpec("currency", "عملة القيمة النقدية"), FieldSpec("effective_from", "تاريخ السريان ISO-8601"), FieldSpec("effective_to", "تاريخ الانتهاء ISO-8601 (اختياري)"), FieldSpec("status", "الحالة"))
     AdminFormKind.PACKAGE -> listOf(FieldSpec("code", "رمز الباقة"), FieldSpec("name", "اسم الباقة"), FieldSpec("points", "عدد النقاط", KeyboardType.Number), FieldSpec("price", "السعر", KeyboardType.Decimal), FieldSpec("currency", "العملة"), FieldSpec("display_order", "ترتيب العرض", KeyboardType.Number), FieldSpec("is_visible", "مرئية"), FieldSpec("is_active", "مفعّلة"))
@@ -865,7 +858,7 @@ private fun sectionIcon(section: AdminSection): ImageVector = when (section) {
     AdminSection.PERIODIC_PAYMENT -> Icons.Outlined.Payment; AdminSection.TASK_PLANS -> Icons.Outlined.TaskAlt; AdminSection.FINANCE -> Icons.Outlined.Assessment
     AdminSection.COMMUNICATIONS -> Icons.Outlined.People; AdminSection.ABOUT -> Icons.Outlined.Shield
     AdminSection.SETUP -> Icons.Outlined.Settings; AdminSection.LOGIN -> Icons.Outlined.Person
-    AdminSection.REGISTRATION -> Icons.Outlined.Person; AdminSection.RECOVERY -> Icons.Outlined.Person
+    AdminSection.RECOVERY -> Icons.Outlined.Person
 }
 private fun fieldValue(row: JSONObject, key: String): String {
     val value = row.opt(key)
@@ -877,7 +870,7 @@ private fun fieldLabel(key: String) = when (key) {
     "protection_count" -> "الحمايات النشطة"; "phone_e164", "display_phone" -> "الرقم"; "provider_name" -> "الشركة"; "customer_name" -> "العميل"
     "public_added_number_code" -> "رمز الرقم المضاف"; "public_user_code" -> "رمز المستخدم"; "public_subscriber_code" -> "رمز المشترك"
     "added_at" -> "تاريخ الإضافة"; "start_at", "started_at" -> "البداية"; "end_at", "expires_at" -> "الانتهاء"; "duration_days" -> "المدة بالأيام"
-    "tariff_mode" -> "وحدة التعرفة"; "tariff_duration_unit_days" -> "أيام وحدة التعرفة"; "tariff_points_per_unit" -> "نقاط لكل وحدة"; "duration_unit_days" -> "أيام الوحدة"; "duration_unit_days_snapshot" -> "أيام الوحدة"; "points_per_unit" -> "نقاط لكل وحدة"; "points_per_unit_snapshot" -> "نقاط لكل وحدة"; "rate" -> "القيمة النقدية"; "currency" -> "العملة"; "total_points_snapshot" -> "النقاط المسجلة"; "points_cost_snapshot" -> "تكلفة النقاط"; "units_snapshot" -> "عدد الوحدات"; "remaining_days" -> "الأيام المتبقية"
+    "tariff_mode" -> "وحدة التعرفة"; "tariff_duration_unit_days" -> "أيام وحدة التعرفة"; "tariff_points_per_unit" -> "نقاط لكل وحدة"; "duration_unit_days" -> "أيام الوحدة"; "duration_unit_days_snapshot" -> "أيام الوحدة"; "points_per_unit" -> "نقاط لكل وحدة"; "points_per_unit_snapshot" -> "نقاط لكل وحدة"; "rate" -> "القيمة النقدية"; "currency" -> "العملة"; "total_points_snapshot" -> "النقاط المسجلة"; "points_cost_snapshot" -> "تكلفة النقاط"; "units_snapshot" -> "عدد الوحدات"; "remaining_days" -> "الأيام المتبقية"; "extension_warning_days" -> "أيام التنبيه للتمديد"; "needs_extension" -> "يحتاج تمديد"
     "task_plan_interval_days" -> "فاصل المهام"; "next_task_due" -> "المهمة القادمة"; "next_task_status" -> "حالة المهمة"; "following_task_due" -> "المهمة التالية"
     "public_purchase_code", "request_number" -> "رقم الطلب"; "package_name", "package_name_snapshot" -> "الباقة"; "points", "points_snapshot", "points_amount_snapshot" -> "النقاط"; "price", "price_snapshot", "price_amount_snapshot" -> "السعر"
     "currency_snapshot" -> "العملة"; "payment_method_name_snapshot" -> "وسيلة الدفع"; "payment_method_details", "payment_method_details_snapshot" -> "بيانات وتعليمات الدفع"

@@ -31,6 +31,8 @@ import java.time.Instant
     val cachedAtMillis: Long? = null,
     val section: AdminSection = AdminSection.HOME,
     val rows: List<JSONObject> = emptyList(),
+    val pageIndex: Int = 0,
+    val pageHasMore: Boolean = false,
     val selectedIndex: Int = -1,
     val relatedKind: RelatedListKind? = null,
     val relatedRows: List<JSONObject> = emptyList(),
@@ -129,20 +131,6 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
         }
     }
 
-    fun registerAuthIdentity(password: String) {
-        val email = _state.value.email.trim()
-        if (email.isBlank() || password.length < 6) { _state.value = _state.value.copy(error = "أدخل بريدًا صالحًا وكلمة مرور لا تقل عن 6 أحرف."); return }
-        viewModelScope.launch {
-            _state.value = _state.value.copy(busy = true, error = null, notice = null)
-            try {
-                repository.registerAuthIdentity(email, password)
-                _state.value = _state.value.copy(busy = false, notice = "أُنشئت هوية Auth فقط. تحقق من البريد إن طُلب ذلك؛ لا تمنح هذه الخطوة admin_identity أو صلاحية دخول الإدارة، ويلزم تعيين مخوّل منفصل.")
-            } catch (error: Exception) {
-                _state.value = _state.value.copy(busy = false, error = error.message ?: "تعذر إنشاء الهوية.")
-            }
-        }
-    }
-
     fun signIn(password: String) {
         val email = _state.value.email.trim()
         if (email.isBlank() || password.isBlank()) {
@@ -169,7 +157,7 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
     fun open(section: AdminSection, keepSearch: Boolean = false) {
         val preservedSearch = _state.value.searchText.takeIf { keepSearch }.orEmpty()
         _state.value = _state.value.copy(section = section, searchText = preservedSearch, filterStatus = "", filterFrom = "", filterTo = "", filterProviderQuery = "",
-            selectedIndex = -1, relatedKind = null, relatedRows = emptyList(), relatedSelectedIndex = -1, formKind = null,
+            pageIndex = 0, pageHasMore = false, selectedIndex = -1, relatedKind = null, relatedRows = emptyList(), relatedSelectedIndex = -1, formKind = null,
             reportRows = emptyList(), error = null, notice = null)
         if (section == AdminSection.REPORTS) _state.value = _state.value.copy(reportTypeId = ReportType.all.first().id)
         reload()
@@ -198,7 +186,7 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(loading = true, error = null)
             try {
-                val result = repository.load(section, snapshot.searchText, snapshot.filterStatus, snapshot.filterFrom, snapshot.filterTo, snapshot.filterProviderQuery)
+                val result = repository.load(section, snapshot.searchText, snapshot.filterStatus, snapshot.filterFrom, snapshot.filterTo, snapshot.filterProviderQuery, snapshot.pageIndex)
                 applyRows(result)
                 if (result.warningMessage != null) _state.value = _state.value.copy(notice = result.warningMessage)
             } catch (error: Exception) {
@@ -217,6 +205,7 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
         val index = if (result.rows.isEmpty()) -1 else result.rows.indexOfFirst { it.optString("id") == previous }.takeIf { it >= 0 } ?: 0
         _state.value = _state.value.copy(rows = result.rows, selectedIndex = index, loading = false,
             offlineSnapshot = result.offlineSnapshot, cachedAtMillis = result.cachedAtMillis,
+            pageIndex = result.pageIndex, pageHasMore = result.pageHasMore,
             notice = result.warningMessage ?: _state.value.notice)
     }
 
@@ -228,15 +217,21 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
     }
 
     fun updateSearch(value: String) {
-        _state.value = _state.value.copy(searchText = value)
+        _state.value = _state.value.copy(searchText = value, pageIndex = 0)
         searchJob?.cancel()
         searchJob = viewModelScope.launch { delay(300); if (_state.value.section !in setOf(AdminSection.REPORTS) && _state.value.relatedKind == null) reload() }
     }
-    fun setFilterStatus(value: String) { _state.value = _state.value.copy(filterStatus = value); reload() }
+    fun setFilterStatus(value: String) { _state.value = _state.value.copy(filterStatus = value, pageIndex = 0); reload() }
     fun setFilterFrom(value: String) { _state.value = _state.value.copy(filterFrom = value) }
     fun setFilterTo(value: String) { _state.value = _state.value.copy(filterTo = value) }
     fun setFilterProvider(value: String) { _state.value = _state.value.copy(filterProviderQuery = value) }
-    fun applyFilters() = reload()
+    fun applyFilters() { _state.value = _state.value.copy(pageIndex = 0); reload() }
+    fun setPage(page: Int) {
+        val target = page.coerceAtLeast(0)
+        if (target > _state.value.pageIndex && !_state.value.pageHasMore) return
+        _state.value = _state.value.copy(pageIndex = target)
+        reload()
+    }
     fun hasPermission(permission: String): Boolean = permission in _state.value.permissions
     fun can(permission: String): Boolean = hasPermission(permission) && !_state.value.offlineSnapshot
 
@@ -273,7 +268,8 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
                 "account_type" to row?.optString("account_type").orEmpty(),
                 "account_status" to row?.optString("account_status").orEmpty().ifBlank { "ACTIVE" }, "reason" to "")
             AdminFormKind.PROVIDER -> mapOf("code" to row?.optString("code").orEmpty(), "name" to row?.optString("name").orEmpty(),
-                "status" to row?.optString("status").orEmpty().ifBlank { "ACTIVE" })
+                "status" to row?.optString("status").orEmpty().ifBlank { "ACTIVE" },
+                "extension_warning_days" to row?.optInt("extension_warning_days", 0)?.toString().orEmpty().ifBlank { "0" })
             AdminFormKind.PREFIX -> mapOf("telecom_company_id" to (row?.optString("telecom_company_id") ?: parent).orEmpty(), "prefix" to row?.optString("prefix").orEmpty(),
                 "status" to row?.optString("status").orEmpty().ifBlank { "ACTIVE" })
             AdminFormKind.TARIFF -> mapOf("telecom_company_id" to (row?.optString("telecom_company_id")?.takeIf(String::isNotBlank) ?: parent).orEmpty(),
@@ -358,7 +354,7 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
             AdminMutation.CANCEL_PAYMENT_TASK -> AdminPermissions.TASKS_CANCEL
             AdminMutation.SET_SUBSCRIBER_STATUS -> if (row.optString("account_type") == "SUBSCRIBER") AdminPermissions.CUSTOMERS_UPDATE else AdminPermissions.USERS_UPDATE
             AdminMutation.SET_CUSTOMER_NUMBER_STATUS -> AdminPermissions.NUMBERS_UPDATE
-            AdminMutation.SEND_SUPPORT_REPLY, AdminMutation.CLOSE_SUPPORT -> AdminPermissions.SUPPORT_READ
+            AdminMutation.APPROVE_SUPPORT_REQUEST, AdminMutation.SEND_SUPPORT_REPLY, AdminMutation.CLOSE_SUPPORT -> AdminPermissions.SUPPORT_READ
             else -> ""
         }
         if (permission.isNotEmpty() && !can(permission)) { _state.value = s.copy(error = "لا تملك صلاحية هذا الإجراء."); return }
@@ -386,6 +382,7 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
                     AdminMutation.SET_CUSTOMER_NUMBER_STATUS -> "تغيرت حالة علاقة الرقم؛ لا يحرر تطبيق الإدارة رقم الهاتف."
                     AdminMutation.SEND_SUPPORT_REPLY -> "سُجل الرد من حساب الإدارة داخل المحادثة."
                     AdminMutation.CLOSE_SUPPORT -> "أغلقت المحادثة وسُجلت العملية."
+                    AdminMutation.APPROVE_SUPPORT_REQUEST -> "اعتمد Backend طلب الدعم وفتح المحادثة وأشعر العميل."
                     else -> "تم الإجراء."
                 }
                 _state.value = _state.value.copy(busy = false, notice = message)

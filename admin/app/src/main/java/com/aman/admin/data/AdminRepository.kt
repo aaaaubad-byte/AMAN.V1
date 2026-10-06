@@ -16,6 +16,8 @@ data class LoadedRecords(
     val offlineSnapshot: Boolean = false,
     val cachedAtMillis: Long? = null,
     val warningMessage: String? = null,
+    val pageIndex: Int = 0,
+    val pageHasMore: Boolean = false,
 )
 
 /** V11-only data access. Sensitive writes are RPC-only; never mutate PostgREST tables directly. */
@@ -25,7 +27,6 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
     fun canUseCachedAdminSession(): Boolean = gateway.canUseCachedAdminSession()
     suspend fun signIn(email: String, password: String) = gateway.signIn(email, password)
     suspend fun recoverPassword(email: String) = gateway.recoverPassword(email)
-    suspend fun registerAuthIdentity(email: String, password: String) = gateway.registerAuthIdentity(email, password)
     suspend fun expenseTypes(): List<JSONObject> = selectRows("expense_type", "select=id,code,name&status=eq.ACTIVE&order=name.asc&limit=100")
     suspend fun verifyAdmin(): Boolean = gateway.isAdmin()
     suspend fun accountInfo(): JSONObject = JSONObject(gateway.rpc("admin_account_info", JSONObject())).also { info ->
@@ -37,25 +38,28 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
 
     suspend fun load(
         section: AdminSection, query: String = "", status: String = "", dateFrom: String = "",
-        dateTo: String = "", providerQuery: String = "",
+        dateTo: String = "", providerQuery: String = "", page: Int = 0,
     ): LoadedRecords {
         val uid = gateway.currentUserId() ?: throw ContractException("انتهت جلسة الدخول. سجّل الدخول مجددًا.")
         val cacheKey = "$uid:${section.name}"
         try {
             var warning: String? = null
-            val rows = when (section) {
+            val rawRows = when (section) {
                 AdminSection.HOME -> loadDashboard().also { warning = it.second }.first
                 AdminSection.SEARCH -> searchAll(query, status).also { warning = it.second }.first
                 AdminSection.ACCOUNT -> listOf(accountInfo())
                 AdminSection.REPORTS -> emptyList()
-                AdminSection.REGISTRATION, AdminSection.RECOVERY, AdminSection.LOGIN -> emptyList()
+                AdminSection.RECOVERY, AdminSection.LOGIN -> emptyList()
                 AdminSection.ABOUT -> selectRows("app_content", "select=*&status=eq.ACTIVE&order=content_key.asc&limit=100")
                 AdminSection.SETUP -> selectRows("maintenance_config", "select=*&limit=20")
-                else -> loadSectionRows(section, query, status, dateFrom, dateTo, providerQuery)
+                else -> loadSectionRows(section, query, status, dateFrom, dateTo, providerQuery, page)
             }
-            if (section !in setOf(AdminSection.SEARCH, AdminSection.ACCOUNT, AdminSection.REGISTRATION, AdminSection.RECOVERY, AdminSection.LOGIN)) enrich(section, rows)
+            val pageable = section !in setOf(AdminSection.HOME, AdminSection.SEARCH, AdminSection.ACCOUNT, AdminSection.REPORTS, AdminSection.ABOUT, AdminSection.SETUP)
+            val pageHasMore = pageable && rawRows.size > 50
+            val rows = if (pageable) rawRows.take(50) else rawRows
+            if (section !in setOf(AdminSection.SEARCH, AdminSection.ACCOUNT, AdminSection.RECOVERY, AdminSection.LOGIN)) enrich(section, rows)
             cache.put(cacheKey, JSONArray().apply { rows.forEach(::put) })
-            return LoadedRecords(rows, warningMessage = warning)
+            return LoadedRecords(rows, warningMessage = warning, pageIndex = page.coerceAtLeast(0), pageHasMore = pageHasMore)
         } catch (error: IOException) {
             val saved = cache.get(cacheKey) ?: throw error
             return LoadedRecords(filterCachedRows(saved.toObjects(), section, query, status, dateFrom, dateTo, providerQuery),
@@ -176,7 +180,7 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
         return merged to warnings.takeIf { it.isNotEmpty() }?.joinToString("، ") { "مصدر غير متاح: $it" }
     }
 
-    private suspend fun loadSectionRows(section: AdminSection, query: String, status: String, dateFrom: String, dateTo: String, providerQuery: String): List<JSONObject> {
+    private suspend fun loadSectionRows(section: AdminSection, query: String, status: String, dateFrom: String, dateTo: String, providerQuery: String, page: Int): List<JSONObject> {
         if (section == AdminSection.ACCOUNT) return listOf(accountInfo())
         val table = section.table ?: return emptyList()
         val dateColumn = when (section) {
@@ -188,7 +192,7 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             AdminSection.TASK_SETTINGS -> "effective_from"
             else -> "created_at"
         }
-        val args = mutableListOf("select=*", "order=$dateColumn.${if (section == AdminSection.PERIODIC_PAYMENT) "asc" else "desc"}", "limit=300")
+        val args = mutableListOf("select=*", "order=$dateColumn.${if (section == AdminSection.PERIODIC_PAYMENT) "asc" else "desc"},id.asc", "limit=51", "offset=${page.coerceAtLeast(0) * 50}")
         val q = query.trim()
         val statusColumn = if (section in setOf(AdminSection.SUBSCRIBERS, AdminSection.USERS)) "account_status" else "status"
         if (status.isNotBlank() && section != AdminSection.SEARCH) {
@@ -205,6 +209,7 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             AdminSection.SUBSCRIBERS -> args += "account_type=eq.SUBSCRIBER"
             AdminSection.USERS -> args += "account_type=eq.USER"
             AdminSection.PERIODIC_PAYMENT -> args += "status=eq.OPEN"
+            AdminSection.PAYMENT_TASKS -> if (status.isBlank()) args += "status=in.(OPEN,COMPLETED)"
             else -> Unit
         }
         parseDate(dateFrom, false)?.let { args += "$dateColumn=gte.${filterValue(it)}" }
@@ -345,14 +350,19 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
                     val number = numbers[identity?.optString("customer_number_id")]
                     val phone = phones[number?.optString("phone_number_id")]
                     val tariff = tariffs[row.optString("tariff_id")]
+                    val company = companies[phone?.optString("telecom_company_id")]
+                    val remainingDays = runCatching { java.time.Duration.between(Instant.now(), Instant.parse(row.optString("end_at"))).toDays().coerceAtLeast(0) }.getOrNull()
+                    val warningDays = company?.optInt("extension_warning_days", 0) ?: 0
                     row.put("phone_e164", phone?.optString("normalized_phone").orEmpty()).put("display_phone", phone?.optString("display_phone").orEmpty())
                         .put("customer_name", customers[row.optString("customer_id")].displayName())
-                        .put("provider_name", companies[phone?.optString("telecom_company_id")].displayName())
+                        .put("provider_name", company.displayName())
                         .put("duration_unit_days_snapshot", row.optInt("duration_unit_days_snapshot"))
                         .put("points_per_unit_snapshot", row.optLong("points_per_unit_snapshot"))
                         .put("tariff_mode", tariff?.optString("tariff_mode").orEmpty())
                         .put("task_plan_interval_days", JSONObject.NULL)
-                        .put("remaining_days", runCatching { java.time.Duration.between(Instant.now(), Instant.parse(row.optString("end_at"))).toDays().coerceAtLeast(0) }.getOrNull() ?: JSONObject.NULL)
+                        .put("remaining_days", remainingDays ?: JSONObject.NULL)
+                        .put("extension_warning_days", warningDays)
+                        .put("needs_extension", warningDays > 0 && remainingDays != null && remainingDays <= warningDays)
                 }
             }
             AdminSection.PAYMENT_TASKS, AdminSection.PERIODIC_PAYMENT -> {
@@ -451,6 +461,7 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
                 .put("p_reason", "تغيير حالة من تطبيق الإدارة").put("p_idempotency_key", key)
             AdminMutation.SET_CUSTOMER_NUMBER_STATUS -> JSONObject().put("p_customer_number_id", id).put("p_status", input.uppercase())
                 .put("p_reason", "تغيير حالة علاقة الرقم من تطبيق الإدارة").put("p_idempotency_key", key)
+            AdminMutation.APPROVE_SUPPORT_REQUEST -> JSONObject().put("p_conversation_id", id).put("p_reason", input.trim()).put("p_idempotency_key", key)
             AdminMutation.SEND_SUPPORT_REPLY -> JSONObject().put("p_conversation_id", id).put("p_body", input.trim()).put("p_idempotency_key", key)
             AdminMutation.CLOSE_SUPPORT -> JSONObject().put("p_conversation_id", id).put("p_reason", input.trim()).put("p_idempotency_key", key)
             else -> throw ContractException("الإجراء غير متاح لهذا السجل.")
@@ -473,7 +484,8 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             AdminFormKind.PROVIDER -> {
                 validateForm(kind, id, parentId, values)
                 args = JSONObject().put("p_id", id ?: JSONObject.NULL).put("p_code", values["code"].orEmpty())
-                    .put("p_name", values["name"].orEmpty()).put("p_status", values["status"].orEmpty().uppercase()).put("p_idempotency_key", key)
+                    .put("p_name", values["name"].orEmpty()).put("p_status", values["status"].orEmpty().uppercase())
+                    .put("p_extension_warning_days", values["extension_warning_days"]?.toInt() ?: 0).put("p_idempotency_key", key)
                 rpc = "admin_save_telecom_company"
             }
             AdminFormKind.PREFIX -> {
@@ -538,7 +550,7 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
         fun amount(key: String, label: String, allowZero: Boolean = true) { val n = runCatching { BigDecimal(values[key].orEmpty().trim()) }.getOrElse { throw ContractException("أدخل قيمة مالية صالحة في $label.") }; if (n < BigDecimal.ZERO || (!allowZero && n == BigDecimal.ZERO)) throw ContractException("تحقق من قيمة $label.") }
         when (kind) {
             AdminFormKind.USER -> { if (id.isNullOrBlank()) throw ContractException("لا يُنشأ عميل من لوحة الإدارة."); required("name", "الاسم"); required("account_status", "حالة الحساب") }
-            AdminFormKind.PROVIDER -> { required("code", "رمز الشركة"); required("name", "اسم الشركة"); validateGenericStatus(values["status"]) }
+            AdminFormKind.PROVIDER -> { required("code", "رمز الشركة"); required("name", "اسم الشركة"); integer("extension_warning_days", "أيام التحذير"); validateGenericStatus(values["status"]) }
             AdminFormKind.PREFIX -> { if (values["telecom_company_id"].isNullOrBlank() && parentId.isNullOrBlank()) throw ContractException("حدد الشركة."); required("prefix", "بادئة الهاتف"); validateGenericStatus(values["status"]) }
             AdminFormKind.TARIFF -> {
                 if (values["telecom_company_id"].isNullOrBlank() && parentId.isNullOrBlank()) throw ContractException("حدد الشركة.")

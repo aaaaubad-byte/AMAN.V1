@@ -1,6 +1,7 @@
 package com.aman.customer.data
 
 import android.content.Context
+import android.net.Uri
 import android.util.Base64
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -52,8 +53,16 @@ class SupabaseGateway(context: Context) {
 
     suspend fun signUp(email: String, password: String, fullName: String) = withContext(Dispatchers.IO) {
         ensureConfigured()
+        val versions = JSONObject(publicRpc("get_active_consent_versions", JSONObject()))
+        val termsVersion = versions.optString("TERMS")
+        val privacyVersion = versions.optString("PRIVACY")
+        if (termsVersion.isBlank() || privacyVersion.isBlank()) {
+            throw CustomerContractException("لا يمكن إنشاء الحساب قبل نشر نسخة الشروط والخصوصية المعتمدة.")
+        }
         val payload = JSONObject().put("email", email.trim()).put("password", password)
-            .put("data", JSONObject().put("full_name", fullName.trim()))
+            .put("data", JSONObject().put("full_name", fullName.trim())
+                .put("accepted_terms", true).put("accepted_privacy", true)
+                .put("terms_version", termsVersion).put("privacy_version", privacyVersion))
         val result = JSONObject(raw("/auth/v1/signup", "POST", payload.toString()))
         if (result.optString("access_token").isNotBlank()) persist(fromAuth(result))
         result
@@ -61,7 +70,30 @@ class SupabaseGateway(context: Context) {
 
     suspend fun sendPasswordRecovery(email: String) = withContext(Dispatchers.IO) {
         ensureConfigured()
-        raw("/auth/v1/recover", "POST", JSONObject().put("email", email.trim()).toString())
+        raw("/auth/v1/recover", "POST", JSONObject().put("email", email.trim())
+            .put("redirect_to", "aman://auth/callback").toString())
+    }
+
+    suspend fun verifyRecoveryIdentity(customerId: String, email: String, name: String): Boolean = withContext(Dispatchers.IO) {
+        publicRpc("verify_customer_recovery_id", JSONObject().put("p_customer_id", customerId.trim())
+            .put("p_email", email.trim()).put("p_name", name.trim())).trim().equals("true", true)
+    }
+
+    suspend fun acceptRecoveryCallback(link: String): Boolean = withContext(Dispatchers.IO) {
+        ensureConfigured()
+        val uri = Uri.parse(link)
+        val fragment = uri.encodedFragment.orEmpty()
+        val fragmentUri = Uri.parse("https://callback.invalid/?$fragment")
+        val type = uri.getQueryParameter("type") ?: fragmentUri.getQueryParameter("type")
+        val access = uri.getQueryParameter("access_token") ?: fragmentUri.getQueryParameter("access_token")
+        val refresh = uri.getQueryParameter("refresh_token") ?: fragmentUri.getQueryParameter("refresh_token")
+        if (!type.equals("recovery", true) || access.isNullOrBlank() || refresh.isNullOrBlank()) return@withContext false
+        val user = JSONObject(request("$baseUrl/auth/v1/user", "GET", null, access))
+        val userId = user.optString("id")
+        if (userId.isBlank()) return@withContext false
+        val expires = (uri.getQueryParameter("expires_in") ?: fragmentUri.getQueryParameter("expires_in"))?.toLongOrNull() ?: 3600L
+        persist(CustomerSession(access, refresh, userId, System.currentTimeMillis() + expires * 1000L))
+        true
     }
 
     suspend fun updatePassword(newPassword: String) = withContext(Dispatchers.IO) {
@@ -83,13 +115,15 @@ class SupabaseGateway(context: Context) {
             "submit_points_purchase", "activate_protection", "extend_protection", "renew_protection",
             "mark_notification_read", "mark_admin_message_read",
             "create_support_conversation", "send_support_message", "close_support_conversation",
+            "complete_customer_password_recovery",
         )
         if (name !in allowed) throw CustomerContractException("عملية Backend غير معتمدة في عقد عميل AMAN V11: $name")
         request("$baseUrl/rest/v1/rpc/$name", "POST", arguments.toString(), authenticatedToken())
     }
 
     suspend fun publicRpc(name: String, arguments: JSONObject): String = withContext(Dispatchers.IO) {
-        if (name != "get_public_content") throw CustomerContractException("Public RPC غير معتمد: $name")
+        if (name !in setOf("get_public_content", "get_active_consent_versions", "verify_customer_recovery_id"))
+            throw CustomerContractException("Public RPC غير معتمد: $name")
         request("$baseUrl/rest/v1/rpc/$name", "POST", arguments.toString(), null)
     }
 

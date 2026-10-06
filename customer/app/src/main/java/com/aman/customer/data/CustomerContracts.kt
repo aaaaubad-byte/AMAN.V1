@@ -50,6 +50,7 @@ data class CustomerScreenData(
     val related: Map<String, JSONArray> = emptyMap(),
     val errorNotes: List<String> = emptyList(),
     val loadedAt: Long = System.currentTimeMillis(),
+    val hasMore: Boolean = false,
     val selectedThreadId: String? = null,
     val messagesLoading: Boolean = false,
 )
@@ -61,7 +62,10 @@ data class CustomerUiState(
     val authBusy: Boolean = false,
     val authError: String? = null,
     val authNotice: String? = null,
+    val passwordChangeRequired: Boolean = false,
     val screen: CustomerScreen = CustomerScreen.INITIALIZATION,
+    val pageIndex: Int = 0,
+    val pageHasMore: Boolean = false,
     val phase: LoadPhase = LoadPhase.INITIAL,
     val data: CustomerScreenData? = null,
     val error: String? = null,

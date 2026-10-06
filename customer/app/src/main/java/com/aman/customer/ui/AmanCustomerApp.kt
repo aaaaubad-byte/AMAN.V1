@@ -35,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -54,10 +55,16 @@ import com.aman.customer.data.LoadPhase
 import com.aman.customer.data.traceElement
 
 @Composable
-fun AmanCustomerApp(context: Context) {
+fun AmanCustomerApp(context: Context, recoveryLink: String? = null) {
     AppContextHolder.context = context.applicationContext
     val vm: CustomerViewModel = viewModel(factory = CustomerViewModel.factory(context))
     val state by vm.state.collectAsState()
+    LaunchedEffect(recoveryLink) { vm.acceptRecoveryCallback(recoveryLink) }
+
+    if (state.authenticated && state.passwordChangeRequired) {
+        RequiredPasswordChangeScreen(state, vm)
+        return
+    }
 
     if (!state.authenticated) {
         when (state.screen) {
@@ -117,8 +124,40 @@ fun AmanCustomerApp(context: Context) {
                 state.error?.let { NoticeBanner(it, true) }
                 state.mutationMessage?.let { NoticeBanner(it, warning = it.startsWith("تعذر") || it.startsWith("لا يوجد")) }
                 CustomerScreenContent(state, vm, Modifier.weight(1f).fillMaxWidth())
+                if (state.pageIndex > 0 || state.pageHasMore) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { vm.load(state.screen, page = state.pageIndex - 1) }, enabled = state.pageIndex > 0) { Text("السابق") }
+                        Text("صفحة ${state.pageIndex + 1}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(onClick = { vm.load(state.screen, page = state.pageIndex + 1) }, enabled = state.pageHasMore) { Text("التالي") }
+                    }
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun RequiredPasswordChangeScreen(state: CustomerUiState, vm: CustomerViewModel) {
+    var password by rememberSaveable { mutableStateOf("") }
+    var confirmation by rememberSaveable { mutableStateOf("") }
+    AuthScaffold(title = "تعيين كلمة مرور جديدة", screenId = "C20.PASSWORD") {
+        Text("لأمان حسابك، يجب تعيين كلمة مرور جديدة قبل متابعة استخدام التطبيق.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth().traceElement("C20.NEW_PASSWORD"),
+            label = { Text("كلمة المرور الجديدة") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+        OutlinedTextField(confirmation, { confirmation = it }, Modifier.fillMaxWidth().traceElement("C20.CONFIRM_PASSWORD"),
+            label = { Text("تأكيد كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
+        state.authNotice?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+        state.authError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        state.mutationMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        Button(onClick = { vm.updatePassword(password, confirmation) }, modifier = Modifier.fillMaxWidth().traceElement("C20.SET_PASSWORD"),
+            enabled = !state.mutationBusy && !state.authBusy && password.length >= 8 && password == confirmation) {
+            if (state.mutationBusy) CircularProgressIndicator(Modifier.width(20.dp).height(20.dp), strokeWidth = 2.dp)
+            else Text("حفظ كلمة المرور الجديدة")
+        }
+        Text("لن تتغير كلمة المرور إلا عبر Supabase Auth.", color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center)
     }
 }
 
@@ -204,10 +243,10 @@ private fun RecoveryScreen(state: CustomerUiState, vm: CustomerViewModel) {
     var email by rememberSaveable { mutableStateOf("") }
     var userId by rememberSaveable { mutableStateOf("") }
     AuthScaffold(title = "استعادة الحساب", screenId = "C20") {
-        Text("أدخل بيانات الاستعادة. يرسل Supabase Auth التعليمات إلى البريد الإلكتروني فقط؛ لا يتحقق هذا المسار من الاسم أو معرّف المستخدم. وستبقى نتيجة الطلب عامة لحماية الحسابات.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("يُطابق الخادم الاسم والبريد ومعرّف العميل، ثم يرسل رابطًا إلى البريد المسجل عند تطابقها. تبقى نتيجة الطلب عامة لحماية الحسابات.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().traceElement("C20.NAME"), label = { Text("الاسم") }, singleLine = true)
         OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth().traceElement("C20.EMAIL"), label = { Text("البريد الإلكتروني") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
-        OutlinedTextField(userId, { userId = it }, Modifier.fillMaxWidth().traceElement("C20.USER_ID"), label = { Text("معرّف المستخدم") }, singleLine = true)
+        OutlinedTextField(userId, { userId = it }, Modifier.fillMaxWidth().traceElement("C20.USER_ID"), label = { Text("معرّف العميل") }, singleLine = true)
         AuthFeedback(state, vm)
         Button(onClick = { vm.requestRecovery(name, email, userId) }, modifier = Modifier.fillMaxWidth().traceElement("C20.SUBMIT"),
             enabled = !state.authBusy && vm.isConfigured()) {

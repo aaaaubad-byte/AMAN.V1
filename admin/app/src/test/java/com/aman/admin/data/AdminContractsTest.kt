@@ -7,11 +7,12 @@ import org.junit.Test
 
 class AdminContractsTest {
     @Test fun referenceContainsExactlyTwentyCanonicalAdminScreens() {
-        assertEquals(20, adminRoutes.size)
-        assertEquals((1..20).map { "A%02d".format(it) }, adminRoutes.map { it.screenId })
-        assertEquals(20, adminRoutes.map { it.screenId }.distinct().size)
-        assertEquals(setOf("A01", "A04", "A05", "A16", "A17", "A18", "A19", "A20"),
-            AdminUiTraceability.coveredRoutes().intersect(setOf("A01", "A04", "A05", "A16", "A17", "A18", "A19", "A20")))
+        assertEquals(19, adminRoutes.size)
+        assertEquals((1..20).map { "A%02d".format(it) }.filterNot { it == "A18" }, adminRoutes.map { it.screenId })
+        assertEquals(19, adminRoutes.map { it.screenId }.distinct().size)
+        assertFalse(adminRoutes.any { it.screenId == "A18" })
+        assertEquals(setOf("A01", "A04", "A05", "A16", "A17", "A19", "A20"),
+            AdminUiTraceability.coveredRoutes().intersect(setOf("A01", "A04", "A05", "A16", "A17", "A19", "A20")))
     }
 
     @Test fun dashboardHasNineDistinctPrimaryDestinations() {
@@ -28,14 +29,14 @@ class AdminContractsTest {
             "admin_set_customer_number_status", "admin_save_telecom_company", "admin_save_telecom_prefix",
             "admin_save_provider_tariff", "admin_save_points_package", "admin_save_payment_method",
             "admin_save_task_configuration", "admin_create_expense", "admin_grant_points",
-            "admin_send_support_reply", "admin_close_support_conversation", "admin_send_notification",
+            "admin_approve_support_request", "admin_send_support_reply", "admin_close_support_conversation", "admin_send_notification",
         )))
         assertFalse("Admin cannot edit phone entities", names.any { it.contains("edit_customer_number") || it == "admin_update_customer_number" })
     }
 
     @Test fun recordSectionsBindV11TablesAndRealPermissions() {
         AdminSection.entries.filter { it !in setOf(AdminSection.SEARCH, AdminSection.HOME, AdminSection.REPORTS, AdminSection.ACCOUNT,
-            AdminSection.LOGIN, AdminSection.REGISTRATION, AdminSection.RECOVERY) }.forEach { section ->
+            AdminSection.LOGIN, AdminSection.RECOVERY) }.forEach { section ->
             assertTrue("Missing permission for ${section.name}", section.readPermission.isNotBlank())
             assertTrue("Missing table binding for ${section.name}", section.table != null)
         }

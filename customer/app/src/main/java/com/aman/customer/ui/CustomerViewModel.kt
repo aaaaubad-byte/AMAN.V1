@@ -125,7 +125,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
         val validation = when {
             name.isBlank() -> "أدخل الاسم."
             !email.contains("@") -> "أدخل البريد الإلكتروني."
-            userId.isBlank() -> "أدخل معرّف المستخدم كما يظهر في الحساب."
+            userId.isBlank() -> "أدخل معرّف العميل كما يظهر في الحساب."
             else -> null
         }
         if (validation != null) {
@@ -135,13 +135,28 @@ class CustomerViewModel(context: Context) : ViewModel() {
         viewModelScope.launch {
             _state.value = _state.value.copy(authBusy = true, authError = null, authNotice = null)
             try {
-                withContext(Dispatchers.IO) { gateway.sendPasswordRecovery(email) }
+                val verified = withContext(Dispatchers.IO) { gateway.verifyRecoveryIdentity(userId, email, name) }
+                if (verified) withContext(Dispatchers.IO) { gateway.sendPasswordRecovery(email) }
                 _state.value = _state.value.copy(authBusy = false,
-                    authNotice = "إذا كانت البيانات مرتبطة بحساب، فستصلك تعليمات الاستعادة إلى البريد المسجل. لم نكشف صلاحية الاسم أو المعرّف.")
+                    authNotice = "إذا كانت البيانات مرتبطة بحساب، فستصلك تعليمات الاستعادة إلى البريد المسجل. افتح الرابط من التطبيق لإكمال التغيير.")
             } catch (_: Exception) {
                 // Keep the response generic to prevent account enumeration.
                 _state.value = _state.value.copy(authBusy = false,
                     authNotice = "إذا كانت البيانات مرتبطة بحساب، فستصلك تعليمات الاستعادة إلى البريد المسجل.")
+            }
+        }
+    }
+
+    fun acceptRecoveryCallback(link: String?) {
+        if (link.isNullOrBlank()) return
+        viewModelScope.launch {
+            try {
+                val accepted = withContext(Dispatchers.IO) { gateway.acceptRecoveryCallback(link) }
+                if (accepted) _state.value = _state.value.copy(authenticated = true, passwordChangeRequired = true,
+                    screen = CustomerScreen.RECOVERY, authBusy = false, authError = null,
+                    authNotice = "تحقق رابط الاسترداد. يلزم تعيين كلمة مرور جديدة للمتابعة.")
+            } catch (_: Exception) {
+                _state.value = _state.value.copy(authError = "تعذر التحقق من رابط الاسترداد. اطلب رابطًا جديدًا.")
             }
         }
     }
@@ -191,7 +206,7 @@ class CustomerViewModel(context: Context) : ViewModel() {
         navigate(CustomerScreen.RENEW)
     }
 
-    fun load(screen: CustomerScreen = _state.value.screen, search: String = "") {
+    fun load(screen: CustomerScreen = _state.value.screen, search: String = "", page: Int = 0) {
         if ((!gateway.hasSession() && screen != CustomerScreen.ABOUT) || screen in setOf(CustomerScreen.INITIALIZATION, CustomerScreen.LOGIN, CustomerScreen.SIGN_UP, CustomerScreen.RECOVERY)) return
         loadJob?.cancel()
         val cached = if (search.isBlank()) repository.cached(screen) else null
@@ -203,11 +218,14 @@ class CustomerViewModel(context: Context) : ViewModel() {
         _state.value = _state.value.copy(screen = screen, phase = LoadPhase.LOADING, data = cached, stale = cached != null, error = null)
         loadJob = viewModelScope.launch {
             try {
-                val data = withContext(Dispatchers.IO) { repository.load(screen, search) }
+                val data = withContext(Dispatchers.IO) { repository.load(screen, search, 50, page.coerceAtLeast(0) * 50) }
                 if (_state.value.screen != screen) return@launch
+                val profile = data.related["profile"]?.optJSONObject(0)
+                val passwordChangeRequired = profile?.optBoolean("password_change_required", false) ?: false
                 _state.value = _state.value.copy(data = data,
                     phase = if (data.records.isEmpty() && data.related.values.all { it.length() == 0 }) LoadPhase.EMPTY else LoadPhase.LOADED,
-                    stale = false, error = null)
+                    stale = false, error = null, passwordChangeRequired = passwordChangeRequired,
+                    pageIndex = page.coerceAtLeast(0), pageHasMore = data.hasMore)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (_state.value.screen != screen) return@launch
@@ -262,7 +280,14 @@ class CustomerViewModel(context: Context) : ViewModel() {
             _state.value = _state.value.copy(mutationMessage = if (password.length < 8) "كلمة المرور يجب ألا تقل عن 8 أحرف." else "كلمتا المرور غير متطابقتين.")
             return
         }
-        mutate("auth.update_password", "تم تحديث كلمة المرور عبر Supabase Auth.") { withContext(Dispatchers.IO) { gateway.updatePassword(password) } }
+        mutate("auth.update_password", "تم تحديث كلمة المرور عبر Supabase Auth.") {
+            withContext(Dispatchers.IO) { gateway.updatePassword(password) }
+            if (_state.value.passwordChangeRequired) {
+                withContext(Dispatchers.IO) { repository.completePasswordRecovery() }
+                _state.value = _state.value.copy(passwordChangeRequired = false, screen = CustomerScreen.HOME,
+                    authNotice = null, authError = null)
+            }
+        }
     }
 
     private fun mutate(actionName: String, success: String, action: suspend () -> Unit) {

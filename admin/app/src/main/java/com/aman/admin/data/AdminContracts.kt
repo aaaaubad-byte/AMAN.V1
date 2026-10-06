@@ -27,7 +27,6 @@ enum class AdminSection(
     ABOUT("A15", "عن أمان", "app_content", AdminPermissions.CUSTOMERS_READ),
     SETUP("A16", "التهيئة", "maintenance_config", AdminPermissions.CUSTOMERS_READ),
     LOGIN("A17", "تسجيل الدخول", null, ""),
-    REGISTRATION("A18", "إنشاء الحساب", null, ""),
     RECOVERY("A19", "استعادة الحساب", null, ""),
     NOTIFICATIONS("A20", "كتابة إشعار إداري", "admin_notification_campaign", AdminPermissions.NOTIFICATIONS_READ),
     TASK_SETTINGS("A05", "إعدادات المهام", "task_configuration", AdminPermissions.TASK_SETTINGS_READ),
@@ -45,8 +44,8 @@ val adminRoutes = listOf(
     AdminRoute("A11", "تواصل أمان"), AdminRoute("A12", "البحث"),
     AdminRoute("A13", "التقارير"), AdminRoute("A14", "الحساب"),
     AdminRoute("A15", "عن أمان"), AdminRoute("A16", "التهيئة"),
-    AdminRoute("A17", "تسجيل الدخول"), AdminRoute("A18", "إنشاء الحساب"),
-    AdminRoute("A19", "استعادة الحساب"), AdminRoute("A20", "كتابة إشعار إداري"),
+    AdminRoute("A17", "تسجيل الدخول"), AdminRoute("A19", "استعادة الحساب"),
+    AdminRoute("A20", "كتابة إشعار إداري"),
 )
 
 data class SectionCard(val section: AdminSection, val icon: String)
@@ -80,6 +79,7 @@ enum class AdminMutation(val rpcName: String) {
     SAVE_TASK_SETTINGS("admin_save_task_configuration"),
     CREATE_EXPENSE("admin_create_expense"),
     GRANT_POINTS("admin_grant_points"),
+    APPROVE_SUPPORT_REQUEST("admin_approve_support_request"),
     SEND_SUPPORT_REPLY("admin_send_support_reply"),
     CLOSE_SUPPORT("admin_close_support_conversation"),
     SEND_NOTIFICATION("admin_send_notification"),

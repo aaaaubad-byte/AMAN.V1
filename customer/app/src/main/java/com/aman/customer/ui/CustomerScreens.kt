@@ -469,8 +469,14 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
     val messages = data.related.array("messages").objects()
     val thread = data.related.array("threads").objects().firstOrNull { it.optString("id") == selectedId }
     val threadRows = data.related.array("threads").objects().filter { row ->
-        (row.optString("subject") + row.optString("status") + row.optString("id")).contains(threadQuery.trim(), true) &&
-            (threadStatus == "الكل" || row.optString("status").equals(if (threadStatus == "مفتوحة") "OPEN" else "CLOSED", true))
+        val requestStatus = row.optString("request_status")
+        val statusMatches = when (threadStatus) {
+            "قيد المراجعة" -> requestStatus == "PENDING"
+            "مفتوحة" -> requestStatus != "PENDING" && row.optString("status").equals("OPEN", true)
+            "مغلقة" -> row.optString("status").equals("CLOSED", true)
+            else -> true
+        }
+        (row.optString("subject") + row.optString("status") + requestStatus + row.optString("id")).contains(threadQuery.trim(), true) && statusMatches
     }
     LaunchedEffect(state.mutationMessage) {
         when (state.mutationMessage) {
@@ -492,14 +498,14 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
     if (!newConversation && threadRows.isNotEmpty()) {
         SectionTitle("محادثات الدعم")
         OutlinedTextField(threadQuery, { threadQuery = it }, Modifier.fillMaxWidth().traceElement("C15.THREAD_SEARCH"), label = { Text("بحث في المحادثات") }, singleLine = true)
-        SimpleMenu("حالة المحادثة", listOf("الكل", "مفتوحة", "مغلقة"), threadStatus, { threadStatus = it }, "C15.THREAD_FILTER")
+        SimpleMenu("حالة المحادثة", listOf("الكل", "قيد المراجعة", "مفتوحة", "مغلقة"), threadStatus, { threadStatus = it }, "C15.THREAD_FILTER")
         threadRows.forEach { row ->
             DataCard(toCustomerRecord("support_conversation", row), traceId = "C15.THREADS", onClick = { selectedId = row.optString("id"); newConversation = false })
         }
         OutlinedButton(onClick = { selectedId = ""; newConversation = true; subject = ""; body = "" }) { Text("طلب دعم جديد") }
     } else if (!newConversation && data.related.array("threads").length() > 0) {
         OutlinedTextField(threadQuery, { threadQuery = it }, Modifier.fillMaxWidth().traceElement("C15.THREAD_SEARCH"), label = { Text("بحث في المحادثات") }, singleLine = true)
-        SimpleMenu("حالة المحادثة", listOf("الكل", "مفتوحة", "مغلقة"), threadStatus, { threadStatus = it }, "C15.THREAD_FILTER")
+        SimpleMenu("حالة المحادثة", listOf("الكل", "قيد المراجعة", "مفتوحة", "مغلقة"), threadStatus, { threadStatus = it }, "C15.THREAD_FILTER")
         EmptyPanel("لا توجد محادثات مطابقة.")
         OutlinedButton(onClick = { selectedId = ""; newConversation = true; subject = ""; body = "" }) { Text("طلب دعم جديد") }
     } else if (!newConversation) {
@@ -507,7 +513,9 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
         OutlinedButton(onClick = { newConversation = true; subject = ""; body = "" }) { Text("طلب دعم جديد") }
     }
     if (thread != null && !newConversation) {
+        val requestApproved = thread.optString("request_status").let { it.isBlank() || it == "APPROVED" }
         SectionTitle(thread.optString("subject").ifBlank { "محادثة الدعم" }, "الحالة: ${thread.optString("status")}")
+        if (!requestApproved) NoticeBanner("طلب الدعم قيد مراجعة الإدارة؛ ستُفتح المحادثة بعد الموافقة.", true)
         val currentMessages = messages.filter { it.optString("conversation_id") == selectedId }
         if (currentMessages.isEmpty()) EmptyPanel("لا توجد رسائل محملة في المحادثة.")
         currentMessages.forEach { message ->
@@ -519,12 +527,12 @@ private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
                 }
             }
         }
-        if (thread.optString("status").equals("OPEN", true)) {
+        if (requestApproved && thread.optString("status").equals("OPEN", true)) {
             TextButton(onClick = { vm.closeSupportConversation(selectedId) }) { Text("إغلاق المحادثة") }
-        } else NoticeBanner("المحادثة مغلقة ولا يمكن إرسال رد جديد.", true)
+        } else if (requestApproved) NoticeBanner("المحادثة مغلقة ولا يمكن إرسال رد جديد.", true)
     }
     if (newConversation) OutlinedTextField(subject, { subject = it }, Modifier.fillMaxWidth().traceElement("C15.SUBJECT"), label = { Text("موضوع الطلب") }, singleLine = true)
-    if (newConversation || thread?.optString("status").equals("OPEN", true)) {
+    if (newConversation || (thread?.optString("status").equals("OPEN", true) && thread.optString("request_status").let { it.isBlank() || it == "APPROVED" })) {
         OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth().height(130.dp).traceElement("C15.MESSAGE"), label = { Text(if (newConversation) "الرسالة" else "الرد") })
         Button(onClick = {
             if (newConversation) vm.createSupportConversation(subject, body) else vm.sendSupportMessage(selectedId, body)

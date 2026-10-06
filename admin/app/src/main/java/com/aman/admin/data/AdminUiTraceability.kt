@@ -54,6 +54,7 @@ object AdminUiTraceability {
         e("A10.EXPENSE", "A10", "Form/Action", "finance.write", "admin_create_expense + ledger debit"),
         e("A11.CONVERSATIONS", "A11", "List", "support.write", "support_conversation"),
         e("A11.MESSAGES", "A11", "List", "support.write", "support_message"),
+        e("A11.APPROVE_REQUEST", "A11", "Action", "support.write", "admin_approve_support_request"),
         e("A11.REPLY_CLOSE", "A11", "Action", "support.write", "admin_send_support_reply/admin_close_support_conversation"),
         e("A12.SEARCH", "A12", "Input/List", "per-source permission", "v11 source-table reads"),
         e("A13.REPORTS", "A13", "Filter/List", "reports.read", "v11 report sources"),
@@ -63,7 +64,6 @@ object AdminUiTraceability {
         e("A15.CONTENT", "A15", "Display", "customers.read", "active app_content versions"),
         e("A16.DIAGNOSTICS", "A16", "Display", "admin session", "config/session/connectivity/storage checks"),
         e("A17.LOGIN", "A17", "Form/Action", "Supabase Auth", "password sign-in + admin_identity/RBAC verification"),
-        e("A18.REGISTRATION", "A18", "Form/Action", "Supabase Auth", "auth identity only; never grants admin privilege"),
         e("A19.RECOVERY", "A19", "Form/Action", "Supabase Auth", "password recovery; generic result"),
         e("A20.NOTIFICATIONS", "A20", "Form/Preview/Action", "notifications.send", "campaign + recipients + notification event + audit"),
     )
@@ -72,7 +72,6 @@ object AdminUiTraceability {
     val knownGaps: List<AdminTraceGap> = listOf(
         AdminTraceGap("GAP-DB-016", "A04/A05", "إعادة بناء خطط المهام التاريخية أو المستقبلية غير معرّفة؛ تعرض الواجهة الخطط وتضيف إصدار إعداد جديدًا فقط."),
         AdminTraceGap("GAP-A20-SEGMENTS", "A20", "شرائح expired/need extension/need renewal/dynamic segment لا تملك شروط أهلية مغلقة في عقد V11 الحالي؛ لن تُرسل لها حملة تخمينية."),
-        AdminTraceGap("GAP-A18-ADMIN-PROVISION", "A18", "تسجيل Auth لا يعيّن admin_identity أو دورًا؛ إضافة صلاحية الإدارة تتطلب تعيينًا مخولًا منفصلًا."),
     )
 
     fun ids(): Set<String> = elements.map { it.elementId }.toSet()

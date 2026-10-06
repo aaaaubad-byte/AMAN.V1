@@ -23,7 +23,7 @@ class CustomerRepository(
         } == true
     }
 
-    suspend fun load(screen: CustomerScreen, search: String = ""): CustomerScreenData = withContext(Dispatchers.IO) {
+    suspend fun load(screen: CustomerScreen, search: String = "", pageSize: Int = 50, pageOffset: Int = 0): CustomerScreenData = withContext(Dispatchers.IO) {
         val userId = gateway.currentUserId() ?: if (screen == CustomerScreen.ABOUT) "public" else throw CustomerContractException("يلزم تسجيل الدخول لقراءة بيانات الحساب.")
         if (screen in setOf(CustomerScreen.INITIALIZATION, CustomerScreen.LOGIN, CustomerScreen.SIGN_UP, CustomerScreen.RECOVERY)) {
             return@withContext CustomerScreenData(screen)
@@ -33,11 +33,13 @@ class CustomerRepository(
                 JSONObject(gateway.publicRpc("get_public_content", JSONObject().put("p_content_key", "ALL")))
             } else JSONObject(gateway.rpc("get_customer_screen_data", JSONObject()
                 .put("p_screen_id", screen.id)
-                .put("p_query", search.trim().take(100))))
+                .put("p_query", search.trim().take(100))
+                .put("p_page_size", pageSize.coerceIn(1, 100))
+                .put("p_page_offset", pageOffset.coerceAtLeast(0))))
         } catch (e: CancellationException) {
             throw e
         }
-        if (userId != "public") cache.put(userId, screen, JSONObject().put("user", userId).put("screen", screen.id).put("payload", payload))
+        if (userId != "public" && pageOffset == 0) cache.put(userId, screen, JSONObject().put("user", userId).put("screen", screen.id).put("payload", payload))
         build(screen, payload, search = search)
     }
 
@@ -62,6 +64,10 @@ class CustomerRepository(
             .put("p_payment_method_id", methodId)
             .put("p_transfer_reference", reference.trim())
             .put("p_idempotency_key", idempotencyKey))
+    }
+
+    suspend fun completePasswordRecovery() {
+        gateway.rpc("complete_customer_password_recovery", JSONObject())
     }
 
     suspend fun addCustomerNumber(phone: String) {
@@ -190,6 +196,7 @@ class CustomerRepository(
             listOf("numbers", "purchases", "ledger", "protections", "notifications", "operations")
                 .flatMap { key -> related.array(key).objects().filter { it.toString().contains(query, true) }.map { toCustomerRecord(key, it) } }
         } else related.array(mainKey).objects().map { toCustomerRecord(mainKey, it) }
-        return CustomerScreenData(screen = screen, records = records, related = related, loadedAt = loadedAt)
+        return CustomerScreenData(screen = screen, records = records, related = related, loadedAt = loadedAt,
+            hasMore = payload.optJSONObject("page_info")?.optBoolean("has_more", false) ?: false)
     }
 }
