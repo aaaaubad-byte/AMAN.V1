@@ -3,18 +3,21 @@ package com.aman.customer.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -100,9 +103,13 @@ fun CustomerScreenContent(state: CustomerUiState, vm: CustomerViewModel, modifie
 
 @Composable
 private fun SectionTitle(title: String, subtitle: String? = null) {
-    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.width(3.dp).height(if (subtitle == null) 22.dp else 34.dp)
+            .background(MaterialTheme.colorScheme.primary, MaterialTheme.shapes.small))
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+        }
     }
 }
 
@@ -116,7 +123,8 @@ private fun KeyValue(label: String, value: String) {
 
 @Composable
 private fun EmptyPanel(message: String) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = MaterialTheme.shapes.medium, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Text(message, Modifier.fillMaxWidth().padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -128,7 +136,8 @@ private fun DataCard(record: CustomerRecord, traceId: String? = null, onClick: (
         Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .then(if (traceId != null) Modifier.traceElement(traceId) else Modifier),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(14.dp),
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(record.title.ifBlank { "سجل" }, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -147,7 +156,8 @@ private fun HomeScreen(data: CustomerScreenData, vm: CustomerViewModel) {
     val profile = data.related.array("profile").optJSONObject(0)
     val balance = data.related.array("balance").optJSONObject(0)?.let { it.opt("balance") ?: it.opt("balance_points") }?.toString()
     val unread = data.related.array("notifications").objects().count { !it.optBoolean("is_read", false) }
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = MaterialTheme.shapes.large, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(profile?.text("name")?.let { "أهلًا، $it" } ?: "مرحبًا بك في أمان", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("رصيد النقاط", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -164,8 +174,9 @@ private fun HomeScreen(data: CustomerScreenData, vm: CustomerViewModel) {
     tiles.chunked(3).forEach { row ->
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             row.forEach { screen ->
-                Card(Modifier.weight(1f).height(82.dp).clickable { vm.navigate(screen) }.traceElement("C04.QUICK_ACTIONS.${screen.id}"),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                Card(Modifier.weight(1f).heightIn(min = 82.dp).clickable { vm.navigate(screen) }.traceElement("C04.QUICK_ACTIONS.${screen.id}"),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = MaterialTheme.shapes.medium, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
                     Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.Center) {
                         Text(screen.id, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
                         Text(screen.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium, maxLines = 2)
@@ -633,7 +644,8 @@ private fun ReportsScreen(data: CustomerScreenData, state: CustomerUiState, vm: 
     if (exportNotice.isNotBlank()) NoticeBanner(exportNotice, exportNotice.startsWith("تعذر"))
     KeyValue("عدد السجلات", rows.size.toString())
     if (rows.isEmpty()) EmptyPanel("لا توجد بيانات فعلية ضمن الفئة والفترة المختارتين.")
-    rows.forEach { row -> Card(Modifier.fillMaxWidth().traceElement("C17.RESULTS"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+    rows.forEach { row -> Card(Modifier.fillMaxWidth().traceElement("C17.RESULTS"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = MaterialTheme.shapes.medium, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(row.type.ifBlank { row.category }, fontWeight = FontWeight.SemiBold)
             KeyValue("التاريخ", formatDate(row.timestamp)); KeyValue("الحالة", row.status); KeyValue("النقاط", row.points)
@@ -715,7 +727,8 @@ private fun JsonItemMenu(label: String, rows: List<JSONObject>, selected: String
 
 @Composable
 private fun ConfirmAction(title: String, body: String, onCancel: () -> Unit, onConfirm: () -> Unit, busy: Boolean) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = MaterialTheme.shapes.large, border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f))) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, fontWeight = FontWeight.Bold)
             Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)

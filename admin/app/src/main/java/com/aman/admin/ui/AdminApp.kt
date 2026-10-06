@@ -69,6 +69,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -188,7 +189,8 @@ private fun HomeScreen(state: AdminUiState, viewModel: AdminViewModel) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
                         line.forEach { metric ->
                             Card(modifier = Modifier.weight(1f).clickable { runCatching { viewModel.open(AdminSection.valueOf(metric.optString("_dashboard_section"))) } },
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(13.dp)) {
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = MaterialTheme.shapes.medium,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
                                 Column(Modifier.fillMaxWidth().padding(11.dp)) {
                                     Text(metric.optString("_dashboard_count"), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                                     Text(metric.optString("_dashboard_metric"), style = MaterialTheme.typography.labelSmall, maxLines = 2)
@@ -566,7 +568,15 @@ private fun ReportControls(state: AdminUiState, viewModel: AdminViewModel, expor
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("التقارير تُشتق من الجداول الفعلية ولا تمثل مصدر الحقيقة.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            ReportType.all.forEach { type -> OutlinedButton(onClick = { viewModel.setReportType(type.id) }) { Text(if (state.reportTypeId == type.id) "✓ ${type.label}" else type.label, maxLines = 1) } }
+            ReportType.all.forEach { type ->
+                val isSelected = state.reportTypeId == type.id
+                OutlinedButton(onClick = { viewModel.setReportType(type.id) },
+                    colors = if (isSelected) ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary,
+                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)) else ButtonDefaults.outlinedButtonColors(),
+                    border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)) {
+                    Text(if (isSelected) "✓ ${type.label}" else type.label, maxLines = 1)
+                }
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(value = state.filterFrom, onValueChange = viewModel::setFilterFrom, modifier = Modifier.weight(1f), label = { Text("من YYYY-MM-DD") }, singleLine = true)
@@ -609,7 +619,13 @@ private fun StatusFilters(selected: String, section: AdminSection, onSelect: (St
         listOf("" to "الكل", "PENDING" to "قيد المراجعة", "OPEN" to "مفتوحة", "ACTIVE" to "نشط", "INACTIVE" to "غير نشط", "ARCHIVED" to "مؤرشف", "APPROVED" to "معتمد", "REJECTED" to "مرفوض", "COMPLETED" to "مكتمل", "CANCELLED" to "ملغى", "EXPIRED" to "منتهية")
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         statuses.forEach { (value, label) ->
-            OutlinedButton(onClick = { onSelect(value) }) { Text(if (selected == value) "✓ $label" else label, maxLines = 1) }
+            val isSelected = selected == value
+            OutlinedButton(onClick = { onSelect(value) },
+                colors = if (isSelected) ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary,
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)) else ButtonDefaults.outlinedButtonColors(),
+                border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)) {
+                Text(if (isSelected) "✓ $label" else label, maxLines = 1)
+            }
         }
     }
 }
@@ -620,7 +636,15 @@ private fun SearchTypeFilters(selected: String, onSelect: (String) -> Unit) {
         "telecom_company" to "الشركات", "operation" to "العمليات", "periodic_task" to "المهام", "admin_notification_campaign" to "الإشعارات",
         "points_package" to "الباقات", "payment_method" to "وسائل الدفع", "task_configuration" to "إعدادات التشغيل")
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        types.forEach { (value, label) -> OutlinedButton(onClick = { onSelect(value) }) { Text(if (selected == value) "✓ $label" else label, maxLines = 1) } }
+        types.forEach { (value, label) ->
+            val isSelected = selected == value
+            OutlinedButton(onClick = { onSelect(value) },
+                colors = if (isSelected) ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary,
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)) else ButtonDefaults.outlinedButtonColors(),
+                border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)) {
+                Text(if (isSelected) "✓ $label" else label, maxLines = 1)
+            }
+        }
     }
 }
 
@@ -670,7 +694,7 @@ private fun DisplayFields(section: AdminSection, row: JSONObject) {
 @Composable
 private fun DashboardTile(section: AdminSection, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val icon = sectionIcon(section)
-    Card(modifier = modifier.height(104.dp).clickable(onClick = onClick), shape = RoundedCornerShape(16.dp),
+    Card(modifier = modifier.heightIn(min = 104.dp).clickable(onClick = onClick), shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
         Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(23.dp))
@@ -686,7 +710,7 @@ private fun DashboardTile(section: AdminSection, modifier: Modifier = Modifier, 
 private fun CompactRecord(row: JSONObject, selected: Boolean, onClick: () -> Unit, section: AdminSection, modifier: Modifier = Modifier) {
     val title = recordTitle(section, row)
     val subtitle = recordSubtitle(row)
-    Card(modifier = modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(14.dp),
+    Card(modifier = modifier.fillMaxWidth().clickable(onClick = onClick), shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -719,6 +743,13 @@ private fun AdminBottomBar(section: AdminSection, viewModel: AdminViewModel) {
         .filter { viewModel.hasPermission(it.readPermission) }
     NavigationBar(containerColor = MaterialTheme.colorScheme.surface, windowInsets = WindowInsets.navigationBars) {
         candidates.forEach { destination -> NavigationBarItem(selected = section == destination, onClick = { viewModel.open(destination) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                selectedTextColor = MaterialTheme.colorScheme.primary,
+                indicatorColor = MaterialTheme.colorScheme.primary,
+                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
             icon = { Icon(sectionIcon(destination), contentDescription = destination.title) }, label = { Text(destination.title, maxLines = 1) }, alwaysShowLabel = true) }
     }
 }

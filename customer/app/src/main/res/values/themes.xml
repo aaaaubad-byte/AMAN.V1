@@ -2,9 +2,10 @@
     <style name="Theme.AMAN.Customer" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:statusBarColor">#151719</item>
-        <item name="android:navigationBarColor">#151719</item>
+        <item name="android:statusBarColor">#0B0F12</item>
+        <item name="android:navigationBarColor">#0B0F12</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:colorAccent">#D9363E</item>
+        <item name="android:colorAccent">#FC0B39</item>
+        <item name="android:windowBackground">#0B0F12</item>
     </style>
 </resources>

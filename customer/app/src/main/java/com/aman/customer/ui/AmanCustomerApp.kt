@@ -3,6 +3,7 @@ package com.aman.customer.ui
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,18 +17,24 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AccountCircle
+import androidx.compose.material.icons.outlined.Assessment
+import androidx.compose.material.icons.outlined.Email
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -48,11 +55,20 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aman.customer.data.CustomerScreen
 import com.aman.customer.data.CustomerUiState
 import com.aman.customer.data.LoadPhase
 import com.aman.customer.data.traceElement
+
+private fun customerTabIcon(destination: CustomerScreen): ImageVector = when (destination) {
+    CustomerScreen.SUPPORT -> Icons.Outlined.Email
+    CustomerScreen.SEARCH -> Icons.Outlined.Search
+    CustomerScreen.HOME -> Icons.Outlined.Home
+    CustomerScreen.REPORTS -> Icons.Outlined.Assessment
+    else -> Icons.Outlined.AccountCircle
+}
 
 @Composable
 fun AmanCustomerApp(context: Context, recoveryLink: String? = null) {
@@ -89,13 +105,14 @@ fun AmanCustomerApp(context: Context, recoveryLink: String? = null) {
                     selected = state.screen == destination,
                     onClick = { vm.selectTab(destination) },
                     modifier = Modifier.traceElement("C04.NAV.${destination.id}"),
-                    icon = { Text(when (destination) {
-                        CustomerScreen.SUPPORT -> "✉"
-                        CustomerScreen.SEARCH -> "⌕"
-                        CustomerScreen.HOME -> "⌂"
-                        CustomerScreen.REPORTS -> "▤"
-                        else -> "◉"
-                    }) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.onPrimary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primary,
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+                    icon = { Icon(customerTabIcon(destination), contentDescription = destination.title) },
                     label = { Text(destination.title, style = MaterialTheme.typography.labelSmall) },
                 )
             }
@@ -111,6 +128,7 @@ fun AmanCustomerApp(context: Context, recoveryLink: String? = null) {
                 onNotifications = if (state.screen == CustomerScreen.HOME) ({ vm.navigate(CustomerScreen.NOTIFICATIONS) }) else null,
                 onAbout = { vm.navigate(CustomerScreen.ABOUT) },
             )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
             if (state.navigationBackStack.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { vm.back() }, modifier = Modifier.traceElement("${state.screen.id}.HEADER.BACK")) { Text("رجوع") }
@@ -278,8 +296,10 @@ private fun AuthFeedback(state: CustomerUiState, vm: CustomerViewModel) {
 
 @Composable
 fun NoticeBanner(message: String, warning: Boolean) {
-    val color = if (warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val container = if (warning) MaterialTheme.colorScheme.error.copy(alpha = 0.10f) else MaterialTheme.colorScheme.surfaceVariant
+    val accent = if (warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     Text(message, Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)
-        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp)).padding(12.dp), color = color,
+        .border(1.dp, accent.copy(alpha = 0.45f), MaterialTheme.shapes.small)
+        .background(container, MaterialTheme.shapes.small).padding(12.dp), color = if (warning) accent else MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.bodySmall)
 }

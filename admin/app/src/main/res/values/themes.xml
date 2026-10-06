@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.AMANAdmin" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.AMANAdmin" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#FC0B39</item>
         <item name="android:windowLightStatusBar">false</item>
