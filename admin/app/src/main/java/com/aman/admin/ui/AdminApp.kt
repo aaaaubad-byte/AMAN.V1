@@ -5,6 +5,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -88,12 +89,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.aman.admin.R
 import com.aman.admin.data.AdminFormKind
 import com.aman.admin.data.AdminMutation
 import com.aman.admin.data.AdminPermissions
@@ -129,11 +132,9 @@ private fun LoginScreen(email: String, busy: Boolean, error: String?, notice: St
         confirmButton = { TextButton(onClick = { showSetup = false }) { Text("إغلاق") } })
     Column(Modifier.fillMaxSize().imePadding().padding(horizontal = 24.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.size(76.dp)) {
-            Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Shield, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(38.dp)) }
-        }
+        Image(painterResource(R.drawable.aman_brand_icon), contentDescription = "شعار أمان", modifier = Modifier.size(84.dp))
         Spacer(Modifier.height(18.dp))
-        Text("AMAN | أمان", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("AMAN | أمان", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("تسجيل دخول الإدارة", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp, bottom = 24.dp))
         OutlinedTextField(value = email, onValueChange = onEmail, modifier = Modifier.fillMaxWidth(), label = { Text("البريد الإلكتروني") },
             singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
@@ -175,7 +176,7 @@ private fun HomeScreen(state: AdminUiState, viewModel: AdminViewModel) {
             Card(shape = PanelShape, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline), modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 18.dp)) {
                 Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Shield, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
+                    Image(painterResource(R.drawable.aman_brand_icon), contentDescription = "شعار أمان", modifier = Modifier.size(48.dp))
                     Column(Modifier.padding(start = 12.dp)) {
                         Text("مرحبًا ${state.adminName.ifBlank { "بالمسؤول" }}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text("لوحة إدارة AMAN", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
@@ -758,12 +759,14 @@ private fun AdminBottomBar(section: AdminSection, viewModel: AdminViewModel) {
 private fun TopHeader(title: String, adminName: String, showBack: Boolean, onBack: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
         if (showBack) IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "رجوع") }
-        else Icon(Icons.Outlined.Shield, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 8.dp).size(23.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             if (adminName.isNotBlank()) Text(adminName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
-        Text("AMAN", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            Image(painterResource(R.drawable.aman_brand_icon), contentDescription = "شعار أمان", modifier = Modifier.size(25.dp))
+            Text("AMAN", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+        }
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .55f))
 }

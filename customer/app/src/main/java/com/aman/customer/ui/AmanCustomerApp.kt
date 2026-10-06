@@ -2,6 +2,7 @@ package com.aman.customer.ui
 
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -14,9 +15,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountCircle
@@ -26,7 +27,6 @@ import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -54,9 +54,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aman.customer.R
 import com.aman.customer.data.CustomerScreen
 import com.aman.customer.data.CustomerUiState
 import com.aman.customer.data.LoadPhase
@@ -182,10 +184,13 @@ private fun RequiredPasswordChangeScreen(state: CustomerUiState, vm: CustomerVie
 @Composable
 private fun BrandHeader(title: String, unreadCount: Int?, onNotifications: (() -> Unit)?, onAbout: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text("AMAN | أمان", Modifier.traceElement("C04.HEADER.BRAND"), color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
-            Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Image(painterResource(R.drawable.aman_brand_icon), contentDescription = "شعار أمان", modifier = Modifier.size(38.dp))
+            Column {
+                Text("AMAN | أمان", Modifier.traceElement("C04.HEADER.BRAND"), color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                Text(title, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
         }
         if (unreadCount != null && onNotifications != null) {
             IconButton(onClick = onNotifications, modifier = Modifier.traceElement("C04.NOTIFICATIONS")) {
@@ -200,9 +205,8 @@ private fun BrandHeader(title: String, unreadCount: Int?, onNotifications: (() -
 private fun InitializationScreen() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Box(Modifier.background(MaterialTheme.colorScheme.surface, CircleShape).padding(26.dp)) {
-                Text("أمان", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
-            }
+            Image(painterResource(R.drawable.aman_brand_icon), contentDescription = "شعار أمان",
+                modifier = Modifier.size(88.dp).traceElement("C01.BRAND"))
             Text("أمان حماية وضمان", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             CircularProgressIndicator(Modifier.traceElement("C01.LOADING"))
             Text("جارٍ التحقق من الجلسة وإعدادات الحساب", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -278,8 +282,11 @@ private fun RecoveryScreen(state: CustomerUiState, vm: CustomerViewModel) {
 private fun AuthScaffold(title: String, screenId: String, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 22.dp),
         verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("AMAN | أمان", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black,
-            modifier = Modifier.traceElement("$screenId.BRAND"))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Image(painterResource(R.drawable.aman_brand_icon), contentDescription = "شعار أمان", modifier = Modifier.size(52.dp))
+            Text("AMAN | أمان", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Black, modifier = Modifier.traceElement("$screenId.BRAND"))
+        }
         Spacer(Modifier.height(8.dp))
         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(18.dp))
