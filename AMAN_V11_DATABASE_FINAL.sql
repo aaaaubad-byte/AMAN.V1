@@ -161,55 +161,6 @@ begin
 end;
 $$;
 
-create or replace function public.current_admin_id()
-returns uuid
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select ai.id
-  from public.admin_identity ai
-  join public.auth_account aa on aa.id = ai.auth_account_id
-  where aa.auth_user_id = auth.uid()
-    and ai.status = 'ACTIVE';
-$$;
-
-create or replace function public.is_admin()
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select exists(
-    select 1 from public.admin_identity ai
-    join public.auth_account aa on aa.id = ai.auth_account_id
-    where aa.auth_user_id = auth.uid()
-      and ai.status = 'ACTIVE'
-  );
-$$;
-
-create or replace function public.has_admin_permission(p_permission text)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select exists(
-    select 1
-    from public.admin_identity ai
-    join public.auth_account aa on aa.id = ai.auth_account_id
-    join public.admin_assignments ass on ass.admin_id = ai.id and ass.status = 'ACTIVE'
-    join public.role_permissions rp on rp.role_id = ass.role_id
-    join public.permissions p on p.id = rp.permission_id and p.status = 'ACTIVE'
-    where aa.auth_user_id = auth.uid()
-      and ai.status = 'ACTIVE'
-      and p.code = p_permission
-  );
-$$;
-
 -- ================================================================
 -- AUTH / IDENTITY
 -- ================================================================
@@ -847,6 +798,55 @@ on public.app_content(content_key)
 where status = 'ACTIVE';
 
 -- ================================================================
+create or replace function public.current_admin_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select ai.id
+  from public.admin_identity ai
+  join public.auth_account aa on aa.id = ai.auth_account_id
+  where aa.auth_user_id = auth.uid()
+    and ai.status = 'ACTIVE';
+$$;
+
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists(
+    select 1 from public.admin_identity ai
+    join public.auth_account aa on aa.id = ai.auth_account_id
+    where aa.auth_user_id = auth.uid()
+      and ai.status = 'ACTIVE'
+  );
+$$;
+
+create or replace function public.has_admin_permission(p_permission text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists(
+    select 1
+    from public.admin_identity ai
+    join public.auth_account aa on aa.id = ai.auth_account_id
+    join public.admin_assignments ass on ass.admin_id = ai.id and ass.status = 'ACTIVE'
+    join public.role_permissions rp on rp.role_id = ass.role_id
+    join public.permissions p on p.id = rp.permission_id and p.status = 'ACTIVE'
+    where aa.auth_user_id = auth.uid()
+      and ai.status = 'ACTIVE'
+      and p.code = p_permission
+  );
+$$;
+
 -- UPDATED_AT TRIGGERS
 -- ================================================================
 
@@ -1832,7 +1832,7 @@ begin
       'app_content','maintenance_config'
     );
 
-  required_count := 39;
+  required_count := 44;
 
   if actual_count <> required_count then
     raise exception 'AMAN_SCHEMA_VERIFICATION_FAILED: expected %, found %',required_count,actual_count;
