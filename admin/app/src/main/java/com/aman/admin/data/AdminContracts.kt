@@ -14,7 +14,7 @@ enum class AdminSection(
     ACTIVE_NUMBERS("A05", "الأرقام المفعلة", "protections", "admin_protections.read"),
     PURCHASES("A06", "طلبات الشراء", "points_purchase_requests", "admin_purchases.read"),
     PAYMENT_TASKS("A07", "مهام السداد", "payment_tasks", "admin_tasks.read"),
-    PROVIDERS("A08", "إدارة الشركات", "telecom_providers", "admin_providers.read"),
+    PROVIDERS("A08", "إدارة الشركات", "telecom_company", "providers.read"),
     PACKAGES("A09", "إدارة الشحن", "points_packages", "admin_packages.read"),
     PAYMENT_METHODS("A10", "وسائل الدفع", "payment_methods", "admin_payment_methods.read"),
     TASK_SETTINGS("A11", "إعدادات المهام", "task_settings", "admin_tasks.settings"),
@@ -102,8 +102,8 @@ object AdminPermissions {
     const val TASKS_RESCHEDULE = "admin_tasks.reschedule"
     const val TASKS_CANCEL = "admin_tasks.cancel"
     const val TASKS_SETTINGS = "admin_tasks.settings"
-    const val PROVIDERS_READ = "admin_providers.read"
-    const val PROVIDERS_MANAGE = "admin_providers.manage"
+    const val PROVIDERS_READ = "providers.read"
+    const val PROVIDERS_MANAGE = "providers.write"
     const val PACKAGES_READ = "admin_packages.read"
     const val PACKAGES_MANAGE = "admin_packages.manage"
     const val PAYMENT_METHODS_READ = "admin_payment_methods.read"

@@ -31,7 +31,7 @@ class AdminContractsTest {
 
     @Test fun recordSectionsHaveExplicitReadPermissionAndTableContracts() {
         AdminSection.entries.filter { it !in setOf(AdminSection.SEARCH) }.forEach { section ->
-            assertTrue("Missing permission for ${section.name}", section.readPermission.startsWith("admin_"))
+            assertTrue("Missing permission for ${section.name}", section.readPermission.isNotBlank())
             assertTrue("Missing table binding for ${section.name}", section.table != null)
         }
         assertEquals(null, AdminSection.SEARCH.table)
@@ -39,7 +39,9 @@ class AdminContractsTest {
 
     @Test fun providerPrefixAndTariffWritesShareTheManagePermission() {
         assertEquals(AdminPermissions.PROVIDERS_READ, AdminSection.PROVIDERS.readPermission)
-        assertEquals("admin_providers.manage", AdminPermissions.PROVIDERS_MANAGE)
+        assertEquals("providers.read", AdminPermissions.PROVIDERS_READ)
+        assertEquals("providers.write", AdminPermissions.PROVIDERS_MANAGE)
+        assertEquals("telecom_company", AdminSection.PROVIDERS.table)
         assertEquals("admin_save_telecom_prefix", AdminMutation.SAVE_PREFIX.rpcName)
         assertEquals("admin_save_provider_tariff", AdminMutation.SAVE_TARIFF.rpcName)
     }
@@ -64,7 +66,7 @@ class AdminContractsTest {
         assertEquals((1..15).map { "A%02d".format(it) }.toSet(), AdminUiTraceability.elements.map { it.screenId }.toSet())
         assertFalse(AdminUiTraceability.ids().contains("A04.ACTION.ACTIVATE"))
         AdminUiTraceability.elements.forEach { element ->
-            assertTrue(element.readPermission.startsWith("admin_"))
+            assertTrue(element.readPermission.isNotBlank())
             assertTrue(element.elementId.startsWith(element.screenId + "."))
         }
     }

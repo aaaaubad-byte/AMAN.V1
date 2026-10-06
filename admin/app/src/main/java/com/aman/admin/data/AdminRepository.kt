@@ -111,8 +111,8 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             RelatedListKind.SUBSCRIBER_POINTS -> Triple("point_ledger", "user_id", parentId)
             RelatedListKind.SUBSCRIBER_HISTORY -> Triple("operations", "user_id", parentId)
             RelatedListKind.PROTECTION_TASKS -> Triple("payment_tasks", "protection_id", parentId)
-            RelatedListKind.PROVIDER_PREFIXES -> Triple("telecom_prefixes", "provider_id", parentId)
-            RelatedListKind.PROVIDER_TARIFFS -> Triple("provider_tariffs", "provider_id", parentId)
+            RelatedListKind.PROVIDER_PREFIXES -> Triple("telecom_prefix", "telecom_company_id", parentId)
+            RelatedListKind.PROVIDER_TARIFFS -> Triple("protection_tariff", "telecom_company_id", parentId)
         }
         val order = if (kind == RelatedListKind.PROTECTION_TASKS) "due_at" else "created_at"
         val rows = JSONArray(gateway.select(table, "select=*&$column=eq.${filterValue(value)}&order=$order.desc&limit=300")).toObjects()
@@ -237,7 +237,7 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             Triple("profiles", "full_name,username,email,phone", "المستخدم"),
             Triple("phone_numbers", "phone_e164,normalized_phone", "رقم"),
             Triple("points_purchase_requests", "request_number,payment_reference", "طلب شراء"),
-            Triple("telecom_providers", "name,short_name,code", "شركة"),
+            Triple("telecom_company", "name,code,country_code", "شركة"),
             Triple("operations", "operation_type,reference_type", "عملية"),
             Triple("payment_tasks", "external_payment_reference", "مهمة"),
             Triple("admin_notifications", "title,body,target_type", "إشعار إداري"),
@@ -271,7 +271,7 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             AdminSection.ACTIVE_NUMBERS -> emptyList()
             AdminSection.PURCHASES -> listOf("request_number", "payment_reference")
             AdminSection.PAYMENT_TASKS -> listOf("external_payment_reference")
-            AdminSection.PROVIDERS -> listOf("name", "short_name", "code")
+            AdminSection.PROVIDERS -> listOf("name", "code")
             AdminSection.PACKAGES, AdminSection.PAYMENT_METHODS -> listOf("name")
             AdminSection.TASK_SETTINGS -> emptyList()
             AdminSection.NOTIFICATIONS -> listOf("title", "body", "target_type")
@@ -333,7 +333,8 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
                     row.put("phone_e164", phone?.optString("phone_e164").orEmpty())
                     row.put("customer_name", profiles[row.optString("user_id")].displayName())
                     row.put("provider_name", providers[row.optString("provider_id")].displayName())
-                    row.put("tariff_points_per_day", tariff?.optInt("points_per_day") ?: row.optInt("points_per_day_snapshot"))
+                    row.put("tariff_duration_unit_days", tariff?.optInt("duration_unit_days") ?: row.optInt("duration_unit_days_snapshot"))
+                    row.put("tariff_points_per_unit", tariff?.optLong("points_per_unit") ?: row.optLong("points_per_unit_snapshot"))
                     row.put("task_plan_interval_days", plan?.optInt("interval_days") ?: JSONObject.NULL)
                     row.put("next_task_due", upcoming.firstOrNull()?.optString("due_at").orEmpty())
                     row.put("next_task_status", upcoming.firstOrNull()?.optString("status").orEmpty())
@@ -367,16 +368,17 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
                 }
             }
             AdminSection.PROVIDERS -> {
-                val prefixes = groupRows(optionalRows("telecom_prefixes"), "provider_id")
-                val tariffs = groupRows(optionalRows("provider_tariffs"), "provider_id")
+                val prefixes = groupRows(optionalRows("telecom_prefix"), "telecom_company_id")
+                val tariffs = groupRows(optionalRows("protection_tariff"), "telecom_company_id")
                 val settings = optionalRows("task_settings").associateBy { it.optString("provider_id") }
                 rows.forEach { row ->
                     val id = row.optString("id")
                     row.put("_prefixes", JSONArray().apply { prefixes[id].orEmpty().forEach(::put) })
                     row.put("_tariffs", JSONArray().apply { tariffs[id].orEmpty().forEach(::put) })
                     row.put("prefix_count", prefixes[id].orEmpty().size)
-                    val tariff = tariffs[id].orEmpty().filter { it.optString("status") == "active" }.maxByOrNull { it.optString("effective_from") }
-                    row.put("points_per_day", tariff?.optInt("points_per_day") ?: JSONObject.NULL)
+                    val tariff = tariffs[id].orEmpty().filter { it.optString("status").equals("ACTIVE", true) }.maxByOrNull { it.optString("effective_from") }
+                    row.put("duration_unit_days", tariff?.optInt("duration_unit_days") ?: JSONObject.NULL)
+                    row.put("points_per_unit", tariff?.optLong("points_per_unit") ?: JSONObject.NULL)
                     row.put("task_settings", settings[id] ?: JSONObject.NULL)
                 }
             }
@@ -442,7 +444,11 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
                 .put("p_status", values["status"] ?: "active")
             AdminFormKind.TARIFF -> JSONObject()
                 .put("p_id", key ?: JSONObject.NULL).put("p_provider_id", values["provider_id"]?.takeIf(String::isNotBlank) ?: parentId ?: JSONObject.NULL)
-                .put("p_points_per_day", values["points_per_day"]?.toInt() ?: 0)
+                .put("p_tariff_mode", values["tariff_mode"].orEmpty())
+                .put("p_duration_unit_days", values["duration_unit_days"]?.toInt() ?: 0)
+                .put("p_points_per_unit", values["points_per_unit"]?.toLong() ?: 0L)
+                .put("p_rate", decimal(values["rate"]))
+                .put("p_currency", values["currency"].orEmpty())
                 .put("p_effective_from", normalizeInstant(values["effective_from"].orEmpty()))
                 .put("p_effective_to", values["effective_to"]?.takeIf(String::isNotBlank)?.let(::normalizeInstant) ?: JSONObject.NULL)
                 .put("p_status", values["status"] ?: "active")
@@ -498,7 +504,17 @@ class AdminRepository(private val gateway: SupabaseGateway, private val cache: L
             AdminFormKind.USER -> { if (id.isNullOrBlank()) throw ContractException("لا يمكن إنشاء مستخدم دون مسار Auth إداري معتمد."); required("full_name", "الاسم الكامل"); required("username", "اسم المستخدم") }
             AdminFormKind.PROVIDER -> { required("code", "رمز الشركة"); required("name", "اسم الشركة"); parseJsonObject(values["operational_settings"].orEmpty().ifBlank { "{}" }, "إعدادات التشغيل"); validateRecordStatus(values["status"]) }
             AdminFormKind.PREFIX -> { if (values["provider_id"].isNullOrBlank() && parentId.isNullOrBlank()) throw ContractException("حدد الشركة."); required("prefix", "بادئة الهاتف"); integer("number_length", "طول الرقم", 1, optional = true); validateRecordStatus(values["status"]) }
-            AdminFormKind.TARIFF -> { if (values["provider_id"].isNullOrBlank() && parentId.isNullOrBlank()) throw ContractException("حدد الشركة."); integer("points_per_day", "النقاط لكل يوم", 1); required("effective_from", "بداية السريان"); normalizeInstant(values["effective_from"].orEmpty()); values["effective_to"]?.takeIf(String::isNotBlank)?.let(::normalizeInstant); validateRecordStatus(values["status"]) }
+            AdminFormKind.TARIFF -> {
+                if (values["provider_id"].isNullOrBlank() && parentId.isNullOrBlank()) throw ContractException("حدد الشركة.")
+                if (values["tariff_mode"] !in setOf("DAILY", "WEEKLY", "MONTHLY", "YEARLY")) throw ContractException("اختر وحدة تعرفة صالحة.")
+                integer("duration_unit_days", "أيام الوحدة", 1)
+                if (values["duration_unit_days"]?.toIntOrNull()?.let { it > 36500 } == true) throw ContractException("لا تتجاوز أيام الوحدة 36500 يومًا.")
+                val pointsPerUnit = values["points_per_unit"]?.toLongOrNull() ?: throw ContractException("أدخل عددًا صحيحًا في النقاط لكل وحدة.")
+                if (pointsPerUnit <= 0L || pointsPerUnit > Long.MAX_VALUE / 120L) throw ContractException("أدخل سعر وحدة موجبًا لا يتجاوز حد نقاط PostgreSQL المسموح.")
+                nonNegativeDecimal("rate", "القيمة النقدية للوحدة"); required("currency", "عملة القيمة النقدية")
+                required("effective_from", "بداية السريان"); normalizeInstant(values["effective_from"].orEmpty())
+                values["effective_to"]?.takeIf(String::isNotBlank)?.let(::normalizeInstant); validateRecordStatus(values["status"])
+            }
             AdminFormKind.PACKAGE -> { required("name", "اسم الباقة"); integer("points_amount", "عدد النقاط", 1); nonNegativeDecimal("price_amount", "السعر"); required("currency", "العملة"); integer("display_order", "ترتيب العرض", 0); validateRecordStatus(values["status"]) }
             AdminFormKind.PAYMENT_METHOD -> { required("name", "اسم وسيلة الدفع"); parseJsonObject(values["payment_data"].orEmpty().ifBlank { "{}" }, "بيانات الدفع"); integer("display_order", "ترتيب العرض", 0); validateRecordStatus(values["status"]) }
             AdminFormKind.TASK_SETTINGS -> { if (values["provider_id"].isNullOrBlank() && parentId.isNullOrBlank()) throw ContractException("حدد الشركة."); integer("interval_days", "فاصل المهام", 1); nonNegativeDecimal("task_amount", "قيمة المهمة"); required("currency", "العملة"); integer("visibility_days_before", "أيام الظهور", 0); integer("post_expiry_creation_limit_days", "حد الإنشاء بعد الانتهاء", 0, optional = true) }

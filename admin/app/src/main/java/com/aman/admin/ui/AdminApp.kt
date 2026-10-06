@@ -431,7 +431,7 @@ private fun AdminFormPanel(state: AdminUiState, viewModel: AdminViewModel) {
     val kind = state.formKind ?: return
     var confirmSave by remember(state.formKind, state.formId) { mutableStateOf(false) }
     if (confirmSave) AlertDialog(onDismissRequest = { confirmSave = false }, title = { Text("تأكيد تغيير إعدادات التشغيل") },
-        text = { Text(if (kind == AdminFormKind.TASK_SETTINGS) "سيحفظ Backend الإعدادات ويعيد بناء خطط المهام المستقبلية للشركة المحددة. هل تريد المتابعة؟" else "سيُحفظ التغيير عبر RPC مدقق وقد يؤثر في حل البادئات/التعرفة للعمليات المستقبلية. اللقطات التاريخية لا يعاد احتسابها.") },
+        text = { Text(if (kind == AdminFormKind.TASK_SETTINGS) "قد يغيّر هذا إعدادات المهام للشركة. لا نفترض إعادة بناء الخطط الحالية أو المستقبلية؛ GAP-DB-016 مفتوح. هل تريد حفظ الإعداد فقط؟" else "سيُحفظ التغيير عبر RPC مدقق وقد يؤثر في حل البادئات/التعرفة للعمليات المستقبلية. اللقطات التاريخية لا يعاد احتسابها.") },
         confirmButton = { TextButton(onClick = { confirmSave = false; viewModel.saveForm() }, enabled = !state.busy) { Text("تأكيد الحفظ") } },
         dismissButton = { TextButton(onClick = { confirmSave = false }) { Text("إلغاء") } })
     Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp), shape = PanelShape,
@@ -440,9 +440,13 @@ private fun AdminFormPanel(state: AdminUiState, viewModel: AdminViewModel) {
             Text(if (state.formId == null) "إضافة ${formTitle(kind)}" else "تعديل ${formTitle(kind)}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text(formContractNote(kind), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             formFields(kind).forEach { (key, label, keyboard) ->
-                if (key in setOf("status", "account_status", "auto_create", "allow_reschedule", "allow_post_expiry_creation")) {
-                    val options = if (key in setOf("auto_create", "allow_reschedule", "allow_post_expiry_creation")) listOf("true", "false")
-                        else if (key == "account_status") listOf("active", "suspended", "banned") else listOf("active", "inactive", "archived")
+                if (key in setOf("status", "account_status", "auto_create", "allow_reschedule", "allow_post_expiry_creation", "tariff_mode")) {
+                    val options = when (key) {
+                        "auto_create", "allow_reschedule", "allow_post_expiry_creation" -> listOf("true", "false")
+                        "account_status" -> listOf("active", "suspended", "banned")
+                        "tariff_mode" -> listOf("DAILY", "WEEKLY", "MONTHLY", "YEARLY")
+                        else -> listOf("active", "inactive", "archived")
+                    }
                     Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) { options.forEach { option ->
                         val chosen = state.formValues[key] == option
@@ -574,13 +578,13 @@ private fun DisplayFields(section: AdminSection, row: JSONObject) {
         AdminSection.SUBSCRIBERS -> listOf("full_name", "username", "phone", "email", "status", "balance_points", "number_count", "protection_count", "became_subscriber_at")
         AdminSection.USERS -> listOf("full_name", "username", "phone", "email", "account_status", "subscriber_status", "balance_points", "created_at")
         AdminSection.ADDED_NUMBERS -> listOf("phone_e164", "provider_name", "customer_name", "status", "added_at")
-        AdminSection.ACTIVE_NUMBERS -> listOf("phone_e164", "customer_name", "provider_name", "status", "started_at", "expires_at", "duration_days", "tariff_points_per_day", "total_points_snapshot", "remaining_days", "task_plan_interval_days", "next_task_due", "next_task_status", "following_task_due")
+        AdminSection.ACTIVE_NUMBERS -> listOf("phone_e164", "customer_name", "provider_name", "status", "started_at", "expires_at", "duration_days", "tariff_duration_unit_days", "tariff_points_per_unit", "total_points_snapshot", "remaining_days", "task_plan_interval_days", "next_task_due", "next_task_status", "following_task_due")
         AdminSection.PURCHASES -> listOf("request_number", "customer_name", "package_name", "points_amount_snapshot", "price_amount_snapshot", "currency_snapshot", "payment_method_name_snapshot", "payment_method_details", "payment_reference", "submitted_at", "status", "rejection_reason")
         AdminSection.PAYMENT_TASKS -> listOf("phone_e164", "customer_name", "provider_name", "task_type", "due_at", "amount_snapshot", "currency_snapshot", "task_attention", "status", "external_payment_reference")
         AdminSection.PROVIDERS -> when {
             row.has("prefix") -> listOf("prefix", "country_code", "number_length", "status")
-            row.has("effective_from") -> listOf("points_per_day", "effective_from", "effective_to", "status")
-            else -> listOf("name", "short_name", "code", "status", "prefix_count", "points_per_day", "operational_settings")
+            row.has("effective_from") -> listOf("tariff_mode", "duration_unit_days", "points_per_unit", "rate", "currency", "effective_from", "effective_to", "status")
+            else -> listOf("name", "country_code", "code", "status", "prefix_count", "operational_settings")
         }
         AdminSection.PACKAGES -> listOf("name", "points_amount", "price_amount", "currency", "display_order", "status")
         AdminSection.PAYMENT_METHODS -> listOf("name", "payment_data", "instructions", "status")
@@ -723,7 +727,7 @@ private fun actionExplanation(action: AdminMutation, row: JSONObject?) = when (a
     AdminMutation.APPROVE_PURCHASE -> "سيعتمد Backend الطلب ويضيف النقاط ويسجل ledger والإشعار والتدقيق. رقم الطلب: ${row?.optString("request_number").orEmpty()}"
     AdminMutation.REJECT_PURCHASE -> "أدخل سببًا؛ لن تُضاف نقاط، وسيسجل Backend القرار ويرسل إشعارًا للمستخدم."
     AdminMutation.EXECUTE_PAYMENT_TASK -> "نفّذ السداد عبر القناة الخارجية الرسمية أولًا. التطبيق لا يحول أموالًا؛ يسجل فقط نتيجة السداد ومرجعه."
-    AdminMutation.RESCHEDULE_PAYMENT_TASK -> "يجب أن يكون الموعد مستقبلًا وضمن فترة الحماية؛ سيعيد Backend بناء خطة المهام."
+    AdminMutation.RESCHEDULE_PAYMENT_TASK -> "يجب أن يكون الموعد مستقبلًا وضمن فترة الحماية. لا نفترض إعادة بناء خطة المهام؛ GAP-DB-016 ما زال مفتوحًا."
     AdminMutation.CANCEL_PAYMENT_TASK -> "سيُلغي Backend المهمة المفتوحة ويسجل سبب الإلغاء والتدقيق."
     else -> "سيتحقق Backend من الصلاحيات والحالة ويسجل الأثر."
 }
@@ -734,24 +738,25 @@ private fun formTitle(kind: AdminFormKind) = when (kind) {
 }
 private fun formContractNote(kind: AdminFormKind) = when (kind) {
     AdminFormKind.PREFIX -> "الإضافة والتعديل والحالة عبر admin_save_telecom_prefix، مع تدقيق الخادم. لا حذف صلب."
-    AdminFormKind.TARIFF -> "إضافة/تعديل الفعالية عبر admin_save_provider_tariff. اللقطات التاريخية للحمايات لا تتغير. أدخل وقتًا ISO-8601."
+    AdminFormKind.TARIFF -> "تُحفظ أيام الوحدة وسعرها بالنقاط مع القيمة النقدية والعملة المطلوبة في V11. خصم العميل يعتمد نقاط الوحدة فقط؛ أدخل وقتًا ISO-8601."
     AdminFormKind.PROVIDER -> "حفظ الشركة وإعدادات التشغيل عبر admin_save_provider."
     AdminFormKind.USER -> "تعديل بيانات الحساب/الحالة عبر admin_update_profile."
     AdminFormKind.PACKAGE -> "تعديل الباقة وحالتها عبر admin_save_points_package."
     AdminFormKind.PAYMENT_METHOD -> "بيانات النوع والترتيب تحفظ داخل payment_data حسب المخطط الحالي."
-    AdminFormKind.TASK_SETTINGS -> "الحفظ يعيد بناء الخطط المستقبلية وفق RPC المعتمد."
+    AdminFormKind.TASK_SETTINGS -> "GAP-DB-016 مفتوح؛ لا تعتبر إعداد المهام دليلًا على إعادة بناء الخطط أو إعادة جدولة الموجود منها."
 }
 private data class FieldSpec(val key: String, val label: String, val keyboard: KeyboardType = KeyboardType.Text)
 private fun formFields(kind: AdminFormKind): List<FieldSpec> = when (kind) {
     AdminFormKind.USER -> listOf(FieldSpec("full_name", "الاسم الكامل"), FieldSpec("username", "اسم المستخدم"), FieldSpec("phone", "الهاتف", KeyboardType.Phone), FieldSpec("account_status", "حالة الحساب"))
     AdminFormKind.PROVIDER -> listOf(FieldSpec("code", "رمز الشركة"), FieldSpec("name", "الاسم"), FieldSpec("short_name", "الاسم المختصر"), FieldSpec("status", "الحالة"), FieldSpec("operational_settings", "إعدادات التشغيل JSON"))
     AdminFormKind.PREFIX -> listOf(FieldSpec("prefix", "البادئة (أرقام مع + اختياري)", KeyboardType.Phone), FieldSpec("country_code", "رمز الدولة"), FieldSpec("number_length", "طول الرقم", KeyboardType.Number), FieldSpec("status", "الحالة"))
-    AdminFormKind.TARIFF -> listOf(FieldSpec("points_per_day", "نقاط لكل يوم", KeyboardType.Number), FieldSpec("effective_from", "تاريخ السريان ISO-8601"), FieldSpec("effective_to", "تاريخ الانتهاء ISO-8601 (اختياري)"), FieldSpec("status", "الحالة"))
+    AdminFormKind.TARIFF -> listOf(FieldSpec("tariff_mode", "وحدة التعرفة"), FieldSpec("duration_unit_days", "أيام الوحدة", KeyboardType.Number), FieldSpec("points_per_unit", "نقاط لكل وحدة", KeyboardType.Number), FieldSpec("rate", "القيمة النقدية للوحدة", KeyboardType.Decimal), FieldSpec("currency", "عملة القيمة النقدية"), FieldSpec("effective_from", "تاريخ السريان ISO-8601"), FieldSpec("effective_to", "تاريخ الانتهاء ISO-8601 (اختياري)"), FieldSpec("status", "الحالة"))
     AdminFormKind.PACKAGE -> listOf(FieldSpec("name", "اسم الباقة"), FieldSpec("points_amount", "عدد النقاط", KeyboardType.Number), FieldSpec("price_amount", "السعر", KeyboardType.Decimal), FieldSpec("currency", "العملة"), FieldSpec("display_order", "ترتيب العرض", KeyboardType.Number), FieldSpec("status", "الحالة"))
     AdminFormKind.PAYMENT_METHOD -> listOf(FieldSpec("name", "اسم وسيلة الدفع"), FieldSpec("method_type", "النوع"), FieldSpec("display_order", "ترتيب العرض", KeyboardType.Number), FieldSpec("payment_data", "بيانات الدفع JSON"), FieldSpec("instructions", "التعليمات"), FieldSpec("status", "الحالة"))
     AdminFormKind.TASK_SETTINGS -> listOf(FieldSpec("interval_days", "الفاصل بالأيام", KeyboardType.Number), FieldSpec("task_amount", "قيمة المهمة", KeyboardType.Decimal), FieldSpec("currency", "العملة"), FieldSpec("visibility_days_before", "أيام الظهور قبل الاستحقاق", KeyboardType.Number), FieldSpec("auto_create", "إنشاء تلقائي"), FieldSpec("allow_reschedule", "السماح بإعادة الجدولة"), FieldSpec("allow_post_expiry_creation", "إنشاء بعد الانتهاء"), FieldSpec("post_expiry_creation_limit_days", "حد الأيام بعد الانتهاء", KeyboardType.Number))
 }.map { FieldSpec(it.key, it.label, it.keyboard) }
 private fun optionLabel(value: String) = when (value) {
+    "DAILY" -> "يومي"; "WEEKLY" -> "أسبوعي"; "MONTHLY" -> "شهري"; "YEARLY" -> "سنوي"
     "active" -> "نشط"; "inactive" -> "غير نشط"; "archived" -> "مؤرشف"; "suspended" -> "موقوف"; "banned" -> "محظور"; "true" -> "نعم"; "false" -> "لا"; else -> value
 }
 private fun relatedReadPermission(kind: RelatedListKind) = when (kind) {
@@ -778,16 +783,16 @@ private fun fieldLabel(key: String) = when (key) {
     "account_status" -> "حالة الحساب"; "subscriber_status" -> "الاشتراك"; "balance_points" -> "رصيد النقاط"; "number_count" -> "عدد الأرقام"
     "protection_count" -> "الحمايات النشطة"; "phone_e164" -> "الرقم"; "provider_name" -> "الشركة"; "customer_name" -> "العميل"
     "added_at" -> "تاريخ الإضافة"; "started_at" -> "البداية"; "expires_at" -> "الانتهاء"; "duration_days" -> "المدة بالأيام"
-    "tariff_points_per_day" -> "نقاط/يوم"; "total_points_snapshot" -> "النقاط المسجلة"; "remaining_days" -> "الأيام المتبقية"
+    "tariff_mode" -> "وحدة التعرفة"; "tariff_duration_unit_days" -> "أيام وحدة التعرفة"; "tariff_points_per_unit" -> "نقاط لكل وحدة"; "duration_unit_days" -> "أيام الوحدة"; "points_per_unit" -> "نقاط لكل وحدة"; "rate" -> "القيمة النقدية"; "currency" -> "العملة"; "total_points_snapshot" -> "النقاط المسجلة"; "remaining_days" -> "الأيام المتبقية"
     "task_plan_interval_days" -> "فاصل المهام"; "next_task_due" -> "المهمة القادمة"; "next_task_status" -> "حالة المهمة"; "following_task_due" -> "المهمة التالية"
     "request_number" -> "رقم الطلب"; "package_name" -> "الباقة"; "points_amount_snapshot" -> "النقاط"; "price_amount_snapshot" -> "السعر"
     "currency_snapshot" -> "العملة"; "payment_method_name_snapshot" -> "وسيلة الدفع"; "payment_method_details" -> "التعليمات"
     "payment_reference" -> "المرجع"; "submitted_at" -> "تاريخ الطلب"; "rejection_reason" -> "سبب الرفض"
     "task_type" -> "نوع المهمة"; "due_at" -> "موعد الاستحقاق"; "amount_snapshot" -> "المبلغ"; "task_attention" -> "التوقيت"
     "external_payment_reference" -> "مرجع السداد"; "name" -> "الاسم"; "short_name" -> "الاسم المختصر"; "code" -> "الرمز"
-    "prefix_count" -> "عدد البادئات"; "points_per_day" -> "نقاط/يوم"; "operational_settings" -> "إعدادات التشغيل"
+    "prefix_count" -> "عدد البادئات"; "operational_settings" -> "إعدادات التشغيل"
     "prefix" -> "البادئة"; "country_code" -> "رمز الدولة"; "number_length" -> "طول الرقم"; "effective_from" -> "سريان من"; "effective_to" -> "سريان حتى"
-    "points_amount" -> "النقاط"; "price_amount" -> "السعر"; "currency" -> "العملة"; "display_order" -> "ترتيب العرض"
+    "points_amount" -> "النقاط"; "price_amount" -> "السعر"; "display_order" -> "ترتيب العرض"
     "payment_data" -> "بيانات الدفع"; "instructions" -> "التعليمات"; "interval_days" -> "الفاصل"
     "task_amount" -> "قيمة المهمة"; "visibility_days_before" -> "أيام الظهور"; "auto_create" -> "الإنشاء التلقائي"
     "allow_reschedule" -> "إعادة الجدولة"; "allow_post_expiry_creation" -> "بعد الانتهاء"; "post_expiry_creation_limit_days" -> "حد ما بعد الانتهاء"

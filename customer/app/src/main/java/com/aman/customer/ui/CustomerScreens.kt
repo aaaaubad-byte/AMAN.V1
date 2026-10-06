@@ -14,8 +14,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,54 +40,59 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.aman.customer.data.CustomerRecord
+import com.aman.customer.data.CustomerReportCategory
 import com.aman.customer.data.CustomerScreen
 import com.aman.customer.data.CustomerScreenData
 import com.aman.customer.data.CustomerUiState
-import com.aman.customer.data.CustomerReportCategory
+import com.aman.customer.data.array
 import com.aman.customer.data.buildCustomerReportRows
+import com.aman.customer.data.calculateProtectionQuote
 import com.aman.customer.data.customerReportCsv
+import com.aman.customer.data.discoverProvider
 import com.aman.customer.data.isValidCustomerReportRange
 import com.aman.customer.data.normalizePhoneE164
-import com.aman.customer.data.phoneDigits
-import com.aman.customer.data.traceElement
-import com.aman.customer.ui.CustomerViewModel
-import com.aman.customer.data.discoverProvider
 import com.aman.customer.data.objects
-import com.aman.customer.data.array
+import com.aman.customer.data.phoneDigits
 import com.aman.customer.data.text
+import com.aman.customer.data.toCustomerRecord
+import com.aman.customer.data.traceElement
 import org.json.JSONArray
 import org.json.JSONObject
-import java.text.DateFormat
-import java.util.Date
 import java.io.OutputStreamWriter
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 @Composable
 fun CustomerScreenContent(state: CustomerUiState, vm: CustomerViewModel, modifier: Modifier = Modifier) {
     val data = state.data
-    Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp).traceElement(state.screen.id), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+        modifier.verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp).traceElement(state.screen.id),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         if (data == null && state.screen != CustomerScreen.ABOUT) {
-            EmptyPanel(if (state.phase.name == "ERROR") "تعذر تحميل بيانات هذه الشاشة." else "جارٍ تحميل بيانات الحساب…")
+            EmptyPanel(if (state.phase.name == "ERROR") "تعذر تحميل هذه الشاشة." else "جارٍ تحميل بيانات الحساب…")
             OutlinedButton(onClick = { vm.load(state.screen) }) { Text("إعادة المحاولة") }
         } else when (state.screen) {
             CustomerScreen.HOME -> HomeScreen(data!!, vm)
-            CustomerScreen.ACTIVE_NUMBERS -> ActiveNumbersScreen(data!!, vm)
-            CustomerScreen.INACTIVE_NUMBERS -> InactiveNumbersScreen(data!!, vm)
-            CustomerScreen.POINTS -> PointsScreen(data!!, state, vm)
-            CustomerScreen.OPERATIONS -> OperationsScreen(data!!)
             CustomerScreen.ADD_NUMBER -> AddNumberScreen(data!!, state, vm)
-            CustomerScreen.ACTIVATE -> ActivateScreen(data!!, state, vm)
-            CustomerScreen.EXTEND -> ExtendScreen(data!!, state, vm)
-            CustomerScreen.ADMIN_ALERTS -> AlertListScreen(data!!, vm)
+            CustomerScreen.BUY_POINTS -> BuyPointsScreen(data!!, state, vm)
+            CustomerScreen.POINTS_HISTORY -> PointsHistoryScreen(data!!)
+            CustomerScreen.ADDED_NUMBERS -> AddedNumbersScreen(data!!, vm)
+            CustomerScreen.ACTIVE_NUMBERS -> ProtectionListScreen(data!!, vm, expired = false)
+            CustomerScreen.EXPIRED_NUMBERS -> ProtectionListScreen(data!!, vm, expired = true)
+            CustomerScreen.ACTIVATE -> ProtectionActionScreen(data!!, state, vm, CustomerScreen.ACTIVATE)
+            CustomerScreen.EXTEND -> ProtectionActionScreen(data!!, state, vm, CustomerScreen.EXTEND)
+            CustomerScreen.RENEW -> ProtectionActionScreen(data!!, state, vm, CustomerScreen.RENEW)
+            CustomerScreen.NOTIFICATIONS -> NotificationsScreen(data!!, vm)
             CustomerScreen.SUPPORT -> SupportScreen(data!!, state, vm)
-            CustomerScreen.NOTIFICATIONS -> NotificationScreen(data!!, vm)
+            CustomerScreen.SEARCH -> SearchScreen(data!!, vm)
             CustomerScreen.REPORTS -> ReportsScreen(data!!, state, vm)
             CustomerScreen.ACCOUNT -> AccountScreen(data!!, state, vm)
-            CustomerScreen.SEARCH -> SearchScreen(data!!, vm)
-            CustomerScreen.ABOUT -> AboutScreen()
+            CustomerScreen.ABOUT -> AboutScreen(data)
+            else -> EmptyPanel("هذه الشاشة مخصصة لتدفق المصادقة.")
         }
         Spacer(Modifier.height(16.dp))
     }
@@ -95,818 +100,613 @@ fun CustomerScreenContent(state: CustomerUiState, vm: CustomerViewModel, modifie
 
 @Composable
 private fun SectionTitle(title: String, subtitle: String? = null) {
-    Column {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         subtitle?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
     }
 }
 
 @Composable
-private fun DataCard(record: CustomerRecord, trailing: String? = null, onClick: (() -> Unit)? = null, traceId: String? = null, copyTraceId: String? = null) {
-    var showDetails by remember { mutableStateOf(false) }
-    val clipboard = LocalClipboardManager.current
-    Card(Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable { onClick() } else Modifier).then(if (traceId == null) Modifier else Modifier.traceElement(traceId)),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(14.dp)) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(record.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    if (record.subtitle.isNotBlank()) Text(record.subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-                trailing?.let { Text(it, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium) }
-            }
-            val summary = record.details.filter { it.first in setOf("expires_at", "duration_days", "points_per_day_snapshot", "total_points_snapshot", "points_amount_snapshot", "price_amount_snapshot", "entry_type", "amount_points", "balance_after", "added_at", "created_at", "rejection_reason", "body") }.take(4)
-            summary.forEach { (key, value) -> if (value.isNotBlank()) Text("${fieldName(key)}: ${value.displayValue()}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (record.title.any(Char::isDigit) && record.source in setOf("protections", "customer_numbers"))
-                    TextButton(onClick = { clipboard.setText(AnnotatedString(record.title)) }, modifier = if (copyTraceId == null) Modifier else Modifier.traceElement(copyTraceId)) { Text("نسخ الرقم") }
-                if (record.details.isNotEmpty() || record.raw.length() > 0) TextButton(onClick = { showDetails = true }) { Text("التفاصيل") }
-            }
-        }
+private fun KeyValue(label: String, value: String) {
+    if (value.isNotBlank()) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(0.42f))
+        Text(value, fontWeight = FontWeight.Medium, modifier = Modifier.weight(0.58f))
     }
-    if (showDetails) Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (record.subtitle.isNotBlank()) Text(record.subtitle, color = MaterialTheme.colorScheme.primary)
-            record.details.forEach { (key, value) -> if (value.isNotBlank()) Text("${fieldName(key)}: ${value.displayValue()}", Modifier.padding(vertical = 3.dp)) }
-            TextButton(onClick = { showDetails = false }) { Text("إغلاق التفاصيل") }
+}
+
+@Composable
+private fun EmptyPanel(message: String) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Text(message, Modifier.fillMaxWidth().padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun DataCard(record: CustomerRecord, traceId: String? = null, onClick: (() -> Unit)? = null) {
+    var expanded by rememberSaveable(record.id) { mutableStateOf(false) }
+    Card(
+        Modifier.fillMaxWidth().then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(if (traceId != null) Modifier.traceElement(traceId) else Modifier),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(record.title.ifBlank { "سجل" }, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (record.subtitle.isNotBlank()) Text(record.subtitle, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+            val keys = setOf("display_phone", "public_user_code", "public_purchase_code", "points_snapshot", "points_cost_snapshot", "duration_days", "start_at", "end_at", "created_at", "submitted_at", "added_at", "balance_after", "description", "rejection_reason", "body", "status")
+            record.details.filter { (key, value) -> key in keys && value.isNotBlank() }.take(if (expanded) 12 else 3).forEach { (key, value) ->
+                KeyValue(fieldName(key), displayValue(value))
+            }
+            if (record.details.size > 3) TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "إخفاء التفاصيل" else "التفاصيل") }
         }
     }
 }
 
 @Composable
 private fun HomeScreen(data: CustomerScreenData, vm: CustomerViewModel) {
-    val profile = data.related["profile"]?.optJSONObject(0)
-    val balance = data.related["balance"]?.optJSONObject(0)?.opt("balance_points")?.toString()
-    val unread = data.related["unread"]?.length() ?: 0
-    val protectionRows = data.related.array("protections").objects()
-    val activeProtections = protectionRows.filter { it.optString("status") == "active" && runCatching { java.time.Instant.parse(it.optString("expires_at")).isAfter(java.time.Instant.now()) }.getOrDefault(false) }
-    val adminAlertCount = data.related.array("admin_alerts").length()
-    Card(Modifier.traceElement("C01.BALANCE.CARD"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp)) {
-            Text(profile?.text("full_name", "username")?.takeIf { it.isNotBlank() }?.let { "أهلًا، $it" } ?: "مرحبًا بك في أمان", Modifier.traceElement("C01.HEADER.USER"), style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
+    val profile = data.related.array("profile").optJSONObject(0)
+    val balance = data.related.array("balance").optJSONObject(0)?.let { it.opt("balance") ?: it.opt("balance_points") }?.toString()
+    val unread = data.related.array("notifications").objects().count { !it.optBoolean("is_read", false) }
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(profile?.text("name")?.let { "أهلًا، $it" } ?: "مرحبًا بك في أمان", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("رصيد النقاط", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(balance?.let { "$it نقطة" } ?: "غير متاح حاليًا", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-            Text("إشعارات غير مقروءة: $unread", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            Text("إشعارات غير مقروءة: $unread", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
-    Card(Modifier.fillMaxWidth().traceElement("C01.PROTECTION.STATUS").clickable { vm.navigate(CustomerScreen.ACTIVE_NUMBERS) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
-            Text("حالة الحماية", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-            Text(
-                when {
-                    data.errorNotes.any { it.startsWith("protections:") } -> "غير متاحة حاليًا"
-                    activeProtections.isNotEmpty() -> "${activeProtections.size} حماية نشطة"
-                    protectionRows.isEmpty() -> "لا توجد حماية مرتبطة بالحساب"
-                    else -> "لا توجد حماية نشطة الآن"
-                },
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-    }
-    SectionTitle("الأقسام")
-    val rows = listOf(
-        listOf(CustomerScreen.POINTS, CustomerScreen.ACTIVE_NUMBERS, CustomerScreen.INACTIVE_NUMBERS),
-        listOf(CustomerScreen.ADD_NUMBER, CustomerScreen.ACTIVATE, CustomerScreen.EXTEND),
-        listOf(CustomerScreen.ADMIN_ALERTS, CustomerScreen.OPERATIONS, CustomerScreen.SUPPORT)
+    SectionTitle("خدماتك")
+    val tiles = listOf(
+        CustomerScreen.ADD_NUMBER, CustomerScreen.BUY_POINTS, CustomerScreen.POINTS_HISTORY,
+        CustomerScreen.ADDED_NUMBERS, CustomerScreen.ACTIVE_NUMBERS, CustomerScreen.EXPIRED_NUMBERS,
+        CustomerScreen.ACTIVATE, CustomerScreen.EXTEND, CustomerScreen.RENEW,
     )
-    rows.forEach { line -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        line.forEach { screen ->
-            val traceId = when (screen) {
-                CustomerScreen.POINTS -> "C01.GRID.ADD_POINTS"; CustomerScreen.ACTIVE_NUMBERS -> "C01.GRID.ACTIVE"
-                CustomerScreen.INACTIVE_NUMBERS -> "C01.GRID.INACTIVE"; CustomerScreen.ADD_NUMBER -> "C01.GRID.ADD_NUMBER"
-                CustomerScreen.ACTIVATE -> "C01.GRID.ACTIVATE"; CustomerScreen.EXTEND -> "C01.GRID.EXTEND"
-                CustomerScreen.ADMIN_ALERTS -> "C01.GRID.ADMIN_ALERTS"; CustomerScreen.OPERATIONS -> "C01.GRID.OPERATIONS"
-                else -> "C01.GRID.SUPPORT"
-            }
-            Card(Modifier.weight(1f).height(78.dp).clickable { vm.navigate(screen) }.traceElement(traceId), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.Center) {
-                Text(screen.id, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
-                Text(screen.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium, maxLines = 2)
-                if (screen == CustomerScreen.ADMIN_ALERTS) Text("$adminAlertCount تنبيه غير مقروء", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.traceElement("C01.GRID.ADMIN_ALERTS.COUNT"))
-            }
-        } }
-    } }
-    SectionTitle("أحدث العمليات", "ملخص فقط؛ افتح سجل العمليات للتفاصيل.")
-    if (data.records.isEmpty()) EmptyPanel("لا توجد عمليات مسجلة في الحساب حتى الآن.")
-    data.records.forEach { record -> RecentOperationCard(record, onClick = { vm.navigate(CustomerScreen.OPERATIONS) }) }
-}
-
-@Composable
-private fun RecentOperationCard(record: CustomerRecord, onClick: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = onClick).traceElement("C01.RECENT.LIST"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(record.title, fontWeight = FontWeight.SemiBold)
-            KeyValue("الحالة", record.subtitle.ifBlank { "غير متاحة" })
-            record.raw.optString("created_at").takeIf(String::isNotBlank)?.let { KeyValue("الوقت", it.displayDate()) }
-            record.raw.opt("points_delta")?.takeIf { it != JSONObject.NULL }?.let { KeyValue("النقاط", it.toString()) }
-            record.raw.opt("money_amount")?.takeIf { it != JSONObject.NULL }?.let { KeyValue("المبلغ", it.toString()) }
-        }
-    }
-}
-
-@Composable
-private fun ActiveNumbersScreen(data: CustomerScreenData, vm: CustomerViewModel) {
-    SectionTitle("حمايات أرقامك", "المهام التشغيلية الداخلية وتفاصيل مبالغ السداد غير معروضة للعميل.")
-    val taskSummaries = data.related.array("task_summaries").objects()
-    if (taskSummaries.isNotEmpty()) {
-        Card(Modifier.fillMaxWidth().traceElement("C02.TASK.SUMMARY"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("ملخص المهام القادمة", fontWeight = FontWeight.SemiBold)
-                taskSummaries.forEach { task ->
-                    val due = task.optString("next_due_at")
-                    if (due.isNotBlank()) KeyValue("موعد المهمة القادمة", due.displayDate()) else Text("لا توجد مهمة قادمة مجدولة.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Text("لا يعرض هذا الملخص المبلغ المالي أو تفاصيل التشغيل.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-    }
-    val now = System.currentTimeMillis()
-    if (data.records.isEmpty()) EmptyPanel("لا توجد حماية مرتبطة بحسابك.")
-    data.records.forEach { record ->
-        val expiry = record.raw.optString("expires_at")
-        val expired = runCatching { java.time.Instant.parse(expiry).toEpochMilli() <= now }.getOrDefault(false)
-        val remaining = if (expired) "منتهية" else runCatching {
-            "${((java.time.Instant.parse(expiry).toEpochMilli() - now) / (24L * 60 * 60 * 1000) + 1).coerceAtLeast(0)} يومًا"
-        }.getOrDefault("غير متاح")
-        val adjusted = record.copy(
-            subtitle = if (expired) "انتهت المدة · حالة الخادم: ${record.raw.optString("status")}" else record.subtitle,
-            details = record.details + ("المدة المتبقية" to remaining)
-        )
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            DataCard(adjusted, trailing = if (expired) "منتهية" else "حماية", traceId = "C02.LIST", copyTraceId = "C02.ACTION.COPY")
-        }
-    }
-}
-
-@Composable
-private fun InactiveNumbersScreen(data: CustomerScreenData, vm: CustomerViewModel) {
-    SectionTitle("أرقامك غير المفعلة", "إضافة الرقم لا تمنح ملكية حصرية ولا تبدأ حماية.")
-    NoticeBanner("حالة القائمة مرتبطة بحمايات حسابك فقط؛ قد يكون الرقم محميًا لعميل آخر ولا تكشف RLS هذه المعلومة. يتحقق الخادم نهائيًا عند محاولة التفعيل.", true)
-    if (data.records.isEmpty()) EmptyPanel("لا توجد أرقام غير مفعلة في قائمة أرقامك.")
-    data.records.forEach { record ->
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            DataCard(record, trailing = "غير مرتبط بحماية حسابك", traceId = "C03.LIST", copyTraceId = "C03.ACTION.COPY")
-        }
-    }
-}
-
-@Composable
-private fun PointsScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
-    var packageId by rememberSaveable { mutableStateOf("") }
-    var methodId by rememberSaveable { mutableStateOf("") }
-    var reference by rememberSaveable { mutableStateOf("") }
-    var confirm by remember { mutableStateOf(false) }
-    var cancelRequestId by rememberSaveable { mutableStateOf("") }
-    var resubmitRequestId by rememberSaveable { mutableStateOf("") }
-    val packages = data.related.array("packages").objects()
-    val methods = data.related.array("methods").objects()
-    SectionTitle("شراء النقاط", "شراء النقاط مستقل عن تفعيل الحماية. لا تضاف النقاط إلا بعد اعتماد الطلب.")
-    KeyValue("رصيد النقاط الحالي", data.related["balance"]?.optJSONObject(0)?.optString("balance_points")?.let { "$it نقطة" } ?: "غير متاح")
-    SelectJsonItem("الباقة", packages, packageId, { it.optString("name") + " · " + it.optString("points_amount") + " نقطة · " + it.optString("price_amount") + " " + it.optString("currency") }, { packageId = it.optString("id") }, "C04.PACKAGE.SELECTOR")
-    SelectJsonItem("وسيلة الدفع", methods, methodId, { it.optString("name") }, { methodId = it.optString("id") }, "C04.PAYMENT.METHOD")
-    methods.firstOrNull { it.optString("id") == methodId }?.let { method ->
-        if (method.optString("instructions").isNotBlank()) Text("التعليمات: ${method.optString("instructions")}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        val paymentData = method.optString("account_identifier")
-        if (paymentData.isNotBlank()) Text("بيانات الدفع: $paymentData", color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-    OutlinedTextField(reference, { reference = it }, Modifier.fillMaxWidth().traceElement("C04.TRANSFER.REFERENCE"), label = { Text("رقم مرجع التحويل") }, singleLine = true)
-    Button(onClick = { confirm = true }, enabled = !state.mutationBusy && packageId.isNotBlank() && methodId.isNotBlank() && reference.isNotBlank(), modifier = Modifier.fillMaxWidth().traceElement("C04.ACTION.SUBMIT")) {
-        Text(if (vm.online()) "مراجعة وإرسال الطلب" else "حفظ الطلب المشفر للإرسال عند الاتصال")
-    }
-    if (packages.isEmpty() || methods.isEmpty()) EmptyPanel("لا تتوفر حاليًا باقات أو وسائل دفع نشطة من الخادم.")
-    data.related.array("requests").objects().forEach { row ->
-        DataCard(com.aman.customer.data.toCustomerRecord("points_purchase_requests", row), traceId = "C04.REQUEST.LIST")
-        when (row.optString("status")) {
-            "pending" -> TextButton(onClick = { cancelRequestId = row.optString("id") }, enabled = !state.mutationBusy, modifier = Modifier.traceElement("C04.ACTION.CANCEL")) { Text("إلغاء الطلب المعلق") }
-            "rejected" -> TextButton(onClick = {
-                resubmitRequestId = row.optString("id")
-                packageId = row.optString("package_id")
-                methodId = row.optString("payment_method_id")
-                reference = row.optString("payment_reference")
-            }, enabled = !state.mutationBusy, modifier = Modifier.traceElement("C04.ACTION.RESUBMIT")) { Text("تصحيح البيانات وإعادة التقديم") }
-        }
-        if (resubmitRequestId == row.optString("id") && row.optString("status") == "rejected") {
-            NoticeBanner("سيبقى رقم الطلب ${row.optString("request_number")} كما هو؛ أرسل المرجع المصحح بعد اختيار الباقة ووسيلة الدفع.", false)
-            Button(onClick = { vm.resubmitPurchase(resubmitRequestId, packageId, methodId, reference); resubmitRequestId = "" },
-                enabled = packageId.isNotBlank() && methodId.isNotBlank() && reference.isNotBlank() && !state.mutationBusy && vm.online(),
-                modifier = Modifier.fillMaxWidth().traceElement("C04.ACTION.RESUBMIT.CONFIRM")) { Text("إعادة تقديم الطلب") }
-        }
-    }
-    if (cancelRequestId.isNotBlank()) ConfirmAction("إلغاء طلب شراء النقاط؟", "لا يمكن إلغاء إلا طلب ما زال قيد المراجعة. يحتفظ السجل برقم الطلب وتاريخه.", { cancelRequestId = "" }, { val id = cancelRequestId; cancelRequestId = ""; vm.cancelPurchase(id) }, state.mutationBusy)
-    val outbox = data.related.array("outbox").objects()
-    if (outbox.isNotEmpty()) {
-        SectionTitle("طلبات محلية لم تصل إلى الخادم")
-        outbox.forEach { item ->
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text(if (item.optString("status") == "queued") "بانتظار توفر الاتصال" else "يتطلب مراجعة قبل إعادة المحاولة", fontWeight = FontWeight.Bold)
-                    KeyValue("مرجع الدفع", "••••${item.optString("payment_reference").takeLast(4)}")
-                    KeyValue("وقت الحفظ المحلي", item.optString("queued_at").displayDate())
-                    Text("هذا ليس طلبًا مسجلًا في الخادم، ولم تُضف نقاط. لا تُعد الدفع بسبب وجود هذا السجل المحلي.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+    tiles.chunked(3).forEach { row ->
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            row.forEach { screen ->
+                Card(Modifier.weight(1f).height(82.dp).clickable { vm.navigate(screen) }.traceElement("C04.QUICK_ACTIONS.${screen.id}"),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                    Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.Center) {
+                        Text(screen.id, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+                        Text(screen.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium, maxLines = 2)
+                    }
                 }
             }
+            repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
         }
     }
-    if (confirm) ConfirmAction("تأكيد إرسال طلب شراء النقاط؟", "بعد إتمام التحويل خارجيًا، يُرسل الطلب فور الاتصال أو يُحفظ مشفرًا للإرسال لاحقًا. لا تُضاف نقاط قبل اعتماد الخادم.", { confirm = false }, {
-        confirm = false; vm.submitPurchase(packageId, methodId, reference)
-    }, state.mutationBusy)
-}
-
-@Composable
-private fun OperationsScreen(data: CustomerScreenData) {
-    var search by rememberSaveable { mutableStateOf("") }
-    var typeFilter by rememberSaveable { mutableStateOf("الكل") }
-    var statusFilter by rememberSaveable { mutableStateOf("") }
-    var fromDate by rememberSaveable { mutableStateOf("") }
-    var toDate by rememberSaveable { mutableStateOf("") }
-    var appliedFrom by rememberSaveable { mutableStateOf("") }
-    var appliedTo by rememberSaveable { mutableStateOf("") }
-    var dateError by rememberSaveable { mutableStateOf("") }
-
-    val operationRefs = data.records.map { it.raw.optString("reference_id") }.filter(String::isNotBlank).toSet()
-    val events = buildList {
-        addAll(data.records)
-        data.related.array("ledger").objects()
-            .filter { it.optString("reference_id").isBlank() || it.optString("reference_id") !in operationRefs }
-            .forEach { add(com.aman.customer.data.toCustomerRecord("point_ledger", it)) }
-        data.related.array("purchases").objects()
-            .filter { it.optString("id") !in operationRefs }
-            .forEach { add(com.aman.customer.data.toCustomerRecord("points_purchase_requests", it)) }
-        data.related.array("numbers").objects()
-            .forEach { add(com.aman.customer.data.toCustomerRecord("customer_numbers", it)) }
-    }.sortedByDescending { customerRecordTimestamp(it) }
-
-    val typeOptions = listOf("الكل", "شراء نقاط", "الحماية", "إضافة رقم", "أخرى")
-    val statusOptions = listOf(
-        "الكل" to "", "قيد المراجعة" to "pending", "معتمد" to "approved", "مرفوض" to "rejected",
-        "ناجح" to "succeeded", "فشل" to "failed", "نشط" to "active", "مؤرشف" to "archived",
-    )
-    val statusLabel = statusOptions.firstOrNull { it.second == statusFilter }?.first ?: "الكل"
-    SectionTitle("سجل العمليات", "عمليات الحساب وحركات النقاط والطلبات والأرقام المرتبطة به.")
-    OutlinedTextField(search, { search = it }, Modifier.fillMaxWidth().traceElement("C05.SEARCH"), label = { Text("بحث في السجل") }, singleLine = true)
-    SimpleMenu("نوع العملية", typeOptions, typeFilter, { typeFilter = it }, "C05.FILTER.TYPE")
-    SimpleMenu("الحالة", statusOptions.map { it.first }, statusLabel, { chosen -> statusFilter = statusOptions.firstOrNull { it.first == chosen }?.second.orEmpty() }, "C05.FILTER.STATUS")
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(fromDate, { fromDate = it }, Modifier.weight(1f), label = { Text("من YYYY-MM-DD") }, singleLine = true)
-        OutlinedTextField(toDate, { toDate = it }, Modifier.weight(1f).traceElement("C05.FILTER.DATE"), label = { Text("إلى YYYY-MM-DD") }, singleLine = true)
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { vm.navigate(CustomerScreen.NOTIFICATIONS) }, Modifier.weight(1f).traceElement("C04.NOTIFICATIONS")) { Text("الإشعارات") }
+        OutlinedButton(onClick = { vm.navigate(CustomerScreen.SUPPORT) }, Modifier.weight(1f)) { Text("تواصل أمان") }
     }
-    Button(onClick = {
-        val from = runCatching { if (fromDate.isBlank()) null else java.time.LocalDate.parse(fromDate.trim()) }.getOrNull()
-        val to = runCatching { if (toDate.isBlank()) null else java.time.LocalDate.parse(toDate.trim()) }.getOrNull()
-        dateError = when {
-            (fromDate.isNotBlank() && from == null) || (toDate.isNotBlank() && to == null) -> "أدخل التاريخ بصيغة YYYY-MM-DD."
-            from != null && to != null && from.isAfter(to) -> "تاريخ البداية يجب ألا يتجاوز تاريخ النهاية."
-            else -> ""
-        }
-        if (dateError.isBlank()) { appliedFrom = fromDate.trim(); appliedTo = toDate.trim() }
-    }, modifier = Modifier.fillMaxWidth().traceElement("C05.FILTER.DATE.APPLY")) { Text("تطبيق نطاق التاريخ") }
-    if (dateError.isNotBlank()) NoticeBanner(dateError, true)
-
-    val filtered = events.filter { record ->
-        val category = customerOperationCategory(record)
-        val status = record.raw.optString("status")
-        val searchable = (listOf(record.id, record.title, record.subtitle) + record.details.map { it.second }).joinToString(" ")
-        (typeFilter == "الكل" || category == typeFilter) &&
-            (statusFilter.isBlank() || status == statusFilter) &&
-            searchable.contains(search.trim(), ignoreCase = true) &&
-            customerDateInRange(customerRecordTimestamp(record), appliedFrom, appliedTo)
-    }
-    Column(Modifier.fillMaxWidth().traceElement("C05.LIST"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (filtered.isEmpty()) EmptyPanel(if (events.isEmpty()) "لا توجد عمليات أو حركات نقاط مسجلة." else "لا توجد نتائج مطابقة لعوامل البحث والتصفية.")
-        filtered.forEach { DataCard(it, traceId = "C05.LIST.ROW") }
-    }
-}
-
-private fun customerOperationCategory(record: com.aman.customer.data.CustomerRecord): String = when (record.source) {
-    "points_purchase_requests" -> "شراء نقاط"
-    "customer_numbers" -> "إضافة رقم"
-    "point_ledger" -> when (record.raw.optString("entry_type")) {
-        "activation_debit", "extension_debit" -> "الحماية"
-        "purchase_credit" -> "شراء نقاط"
-        else -> "أخرى"
-    }
-    "operations" -> when (record.raw.optString("operation_type")) {
-        "points_approval", "points_rejection", "points_purchase" -> "شراء نقاط"
-        "protection_activation", "protection_extension" -> "الحماية"
-        "number_added" -> "إضافة رقم"
-        else -> "أخرى"
-    }
-    else -> "أخرى"
-}
-
-private fun customerRecordTimestamp(record: com.aman.customer.data.CustomerRecord): String =
-    record.raw.optString("created_at").ifBlank { record.raw.optString("submitted_at").ifBlank { record.raw.optString("added_at") } }
-
-private fun customerDateInRange(timestamp: String, fromDate: String, toDate: String): Boolean {
-    if (fromDate.isBlank() && toDate.isBlank()) return true
-    val day = timestamp.substringBefore('T').takeIf { Regex("^[0-9]{4}-[0-9]{2}-[0-9]{2}$").matches(it) } ?: return false
-    return (fromDate.isBlank() || day >= fromDate) && (toDate.isBlank() || day <= toDate)
+    SectionTitle("أحدث الأحداث", "ملخص للأحداث المسجلة؛ لا يُنشأ له سجل أعمال مستقل.")
+    val latest = data.records.sortedByDescending { it.raw.optString("created_at") }.take(5)
+    if (latest.isEmpty()) EmptyPanel("لا توجد أحداث مسجلة في الحساب حتى الآن.")
+    latest.forEach { DataCard(it, traceId = "C04.RECENT") }
 }
 
 @Composable
 private fun AddNumberScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
-    var phone by rememberSaveable { mutableStateOf("") }
-    var editingId by rememberSaveable { mutableStateOf("") }
-    var saveConfirmation by remember { mutableStateOf(false) }
-    var archiveConfirmation by remember { mutableStateOf("") }
-    val prefixes = data.related["prefixes"] ?: JSONArray()
-    val digits = phoneDigits(phone)
-    val e164 = normalizePhoneE164(phone)
-    val match = discoverProvider(digits, prefixes)
-    val numbers = data.related.array("numbers").objects()
-    val editing = numbers.firstOrNull { it.optString("id") == editingId }
-    val duplicate = numbers.any { row ->
-        val stored = row.optJSONObject("phone_numbers")?.let { it.optString("normalized_phone").ifBlank { it.optString("phone_e164") } }.orEmpty()
-        row.optString("id") != editingId && phoneDigits(stored) == digits && digits.isNotBlank() &&
-            (editing != null || row.optString("status") == "active")
+    val editId = vm.selectedCustomerNumberId.orEmpty()
+    val existing = data.related.array("numbers").objects().firstOrNull { it.optString("id") == editId }
+    val initialPhone = existing?.optString("display_phone").orEmpty().ifBlank { existing?.optJSONObject("phone_number")?.optString("display_phone").orEmpty() }
+    var phone by rememberSaveable(editId) { mutableStateOf(initialPhone) }
+    var removeId by rememberSaveable { mutableStateOf("") }
+    var confirmSave by remember { mutableStateOf(false) }
+    val prefixes = data.related.array("prefixes")
+    val normalized = normalizePhoneE164(phone)
+    val match = discoverProvider(phoneDigits(phone), prefixes)
+    val alreadyOwned = data.related.array("numbers").objects().any { row ->
+        row.optString("id") != editId && phoneDigits(row.optString("display_phone").ifBlank { row.optJSONObject("phone_number")?.optString("display_phone").orEmpty() }) == phoneDigits(phone) && phone.isNotBlank()
     }
-    val activeProtectedPhoneIds = data.related.array("protections").objects().filter { it.optString("status") == "active" }.map { it.optString("phone_number_id") }.toSet()
-    val activationHistoryNumberIds = data.related.array("activation_history").objects().map { it.optString("customer_number_id") }.toSet()
     LaunchedEffect(state.mutationMessage) {
-        if (state.mutationMessage == "تمت إضافة الرقم إلى حسابك." || state.mutationMessage == "تم تحديث الرقم.") {
-            editingId = ""; phone = ""; saveConfirmation = false
+        if (state.mutationMessage?.startsWith("تمت إضافة") == true || state.mutationMessage?.startsWith("تم تحديث الرقم") == true) {
+            phone = ""
         }
-        if (state.mutationMessage == "تمت أرشفة الرقم.") archiveConfirmation = ""
     }
-    SectionTitle("إضافة رقم", "أدخل الرقم الدولي بصيغة E.164 مثل +[رمز الدولة][الرقم]. تُكتشف الشركة بأطول بادئة نشطة. الإضافة لا تخصم نقاطًا ولا تنشئ حماية.")
-    OutlinedTextField(phone, { phone = it }, Modifier.fillMaxWidth().traceElement("C06.PHONE.INPUT"), label = { Text("رقم الهاتف الدولي (+...) ") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
+    SectionTitle(if (editId.isBlank()) "إضافة رقم" else "تعديل رقم", "تُكتشف الشركة بأطول بادئة نشطة. لا تخصم الإضافة نقاطًا ولا تنشئ حماية.")
+    OutlinedTextField(phone, { phone = it }, Modifier.fillMaxWidth().traceElement("C05.PHONE"), label = { Text("رقم دولي بصيغة +…") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
     when {
-        phone.isBlank() -> Text("أدخل رقم الهاتف لبدء اكتشاف الشركة.", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.traceElement("C06.PROVIDER.AUTO"))
-        e164 == null -> Text("الصيغة غير مكتملة: يلزم + ثم 7 إلى 15 رقمًا.", color = MaterialTheme.colorScheme.error, modifier = Modifier.traceElement("C06.PROVIDER.AUTO"))
-        match != null -> Text("الشركة المكتشفة: ${match.first} · البادئة المطابقة: ${match.second}", color = MaterialTheme.colorScheme.primary, modifier = Modifier.traceElement("C06.PROVIDER.AUTO"))
-        else -> Text("لم تُكتشف شركة من البادئات النشطة المتاحة.", color = MaterialTheme.colorScheme.error, modifier = Modifier.traceElement("C06.PROVIDER.AUTO"))
+        phone.isBlank() -> Text("أدخل الرقم لعرض الشركة المكتشفة.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        normalized == null -> NoticeBanner("الصيغة غير مكتملة: استخدم + ثم 7 إلى 15 رقمًا.", true)
+        alreadyOwned -> NoticeBanner("هذا الرقم مرتبط بالفعل بحسابك.", true)
+        match != null -> Text("الشركة: ${match.first} · البادئة: ${match.second}", color = MaterialTheme.colorScheme.primary)
+        else -> NoticeBanner("لم تُكتشف شركة من البادئات النشطة المتاحة.", true)
     }
-    if (duplicate) NoticeBanner("الرقم مرتبط بالفعل بحسابك.", true)
-    if (editing != null) {
-        NoticeBanner("تعديل علاقة الرقم لا يغير بيانات رقم محمي. الخادم يعيد التحقق من عدم وجود حماية نشطة قبل الحفظ.", false)
-        TextButton(onClick = { editingId = ""; phone = "" }) { Text("إلغاء التعديل") }
+    Button(onClick = { confirmSave = true }, modifier = Modifier.fillMaxWidth().traceElement(if (editId.isBlank()) "C05.ADD" else "C05.UPDATE"),
+        enabled = !state.mutationBusy && normalized != null && !alreadyOwned && match != null) {
+        Text(if (editId.isBlank()) "إضافة الرقم" else "حفظ تعديل الرقم")
     }
-    val saveAllowed = e164 != null && match != null && !duplicate && !state.mutationBusy && vm.online()
-    Button(onClick = { saveConfirmation = true }, enabled = saveAllowed, modifier = Modifier.fillMaxWidth().traceElement(if (editing == null) "C06.ACTION.ADD" else "C06.ACTION.SAVE")) {
-        Text(if (editing == null) "إضافة الرقم إلى حسابي" else "حفظ تعديل الرقم")
-    }
-    if (!vm.online()) NoticeBanner("يلزم اتصال مباشر لتنفيذ تغيير الرقم؛ لم يُحفظ طلب كتابة محليًا.", true)
-    SectionTitle("أرقام الحساب")
-    if (numbers.isEmpty()) EmptyPanel("لا توجد أرقام مرتبطة بحسابك.")
-    numbers.forEach { row ->
-        val record = com.aman.customer.data.toCustomerRecord("customer_numbers", row)
-        val phoneNumberId = row.optJSONObject("phone_numbers")?.optString("id").orEmpty()
-        val protected = phoneNumberId in activeProtectedPhoneIds
-        val hasActivationHistory = row.optString("id") in activationHistoryNumberIds
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.fillMaxWidth().traceElement("C06.LIST").padding(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                DataCard(record, trailing = if (row.optString("status") == "active") "نشط" else "مؤرشف")
-                if (protected) NoticeBanner("لا يمكن تعديل هذا الرقم أو أرشفته ما دامت عليه حماية نشطة.", true)
-                else if (hasActivationHistory) NoticeBanner("لا يمكن تغيير هوية رقم له سجل تفعيل سابق؛ يمكنك أرشفته مع الاحتفاظ بالسجل.", false)
-                if (row.optString("status") == "active" && !protected) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (!hasActivationHistory) TextButton(onClick = { editingId = row.optString("id"); phone = row.optJSONObject("phone_numbers")?.optString("phone_e164").orEmpty() }, modifier = Modifier.traceElement("C06.ACTION.EDIT")) { Text("تعديل") }
-                        TextButton(onClick = { archiveConfirmation = row.optString("id") }, modifier = Modifier.traceElement("C06.ACTION.DELETE")) { Text("أرشفة") }
-                    }
-                }
+    if (editId.isNotBlank()) TextButton(onClick = { vm.navigate(CustomerScreen.ADDED_NUMBERS) }) { Text("إلغاء التعديل") }
+    if (data.related.array("numbers").length() > 0) {
+        SectionTitle("أرقام الحساب", "يمكن تعديل الرقم أو أرشفته قبل إنشاء سجل حماية.")
+        data.related.array("numbers").objects().forEach { row ->
+            val record = toCustomerRecord("customer_number", row)
+            DataCard(record)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { vm.editCustomerNumber(row.optString("id")) }, enabled = !state.mutationBusy, modifier = Modifier.traceElement("C05.UPDATE")) { Text("تعديل") }
+                TextButton(onClick = { removeId = row.optString("id") }, enabled = !state.mutationBusy, modifier = Modifier.traceElement("C05.DELETE")) { Text("أرشفة") }
             }
         }
     }
-    if (saveConfirmation) ConfirmAction(
-        if (editing == null) "تأكيد إضافة الرقم؟" else "تأكيد تعديل الرقم؟",
-        "سيعيد الخادم التحقق من الصيغة والبادئة والملكية وحالة الحماية قبل الحفظ. الرقم: ${e164.orEmpty()}",
-        { saveConfirmation = false },
-        { saveConfirmation = false; if (editing == null) vm.addCustomerNumber(e164.orEmpty()) else vm.updateCustomerNumber(editingId, e164.orEmpty()) },
+    if (confirmSave) ConfirmAction(
+        if (editId.isBlank()) "تأكيد إضافة الرقم؟" else "تأكيد تعديل الرقم؟",
+        "سيعيد الخادم التحقق من الملكية والبادئة وحالة الحماية قبل الحفظ.",
+        { confirmSave = false },
+        { confirmSave = false; if (editId.isBlank()) vm.addCustomerNumber(phone) else vm.updateCustomerNumber(editId, phone) },
         state.mutationBusy,
     )
-    if (archiveConfirmation.isNotBlank()) ConfirmAction(
-        "أرشفة الرقم؟", "ستتغير حالة علاقة الرقم إلى مؤرشف دون حذف سجل الرقم. يتحقق الخادم من عدم وجود حماية نشطة.",
-        { archiveConfirmation = "" }, { val id = archiveConfirmation; archiveConfirmation = ""; vm.archiveCustomerNumber(id) }, state.mutationBusy,
-    )
+    if (removeId.isNotBlank()) ConfirmAction("أرشفة الرقم؟", "لن يُحذف سجل تاريخي؛ يرفض الخادم الأرشفة إذا سبق إنشاء حماية لهذا الرقم.",
+        { removeId = "" }, { val id = removeId; removeId = ""; vm.deleteCustomerNumber(id) }, state.mutationBusy)
 }
 
 @Composable
-private fun ActivateScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
-    var phoneId by rememberSaveable { mutableStateOf("") }
-    var daysText by rememberSaveable { mutableStateOf("") }
+private fun BuyPointsScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
+    var packageId by rememberSaveable { mutableStateOf("") }
+    var methodId by rememberSaveable { mutableStateOf("") }
+    var reference by rememberSaveable { mutableStateOf("") }
+    var packageQuery by rememberSaveable { mutableStateOf("") }
+    var purchaseQuery by rememberSaveable { mutableStateOf("") }
+    var purchaseStatus by rememberSaveable { mutableStateOf("الكل") }
     var confirm by remember { mutableStateOf(false) }
-    val protections = data.related.array("protections").objects().filter { it.optString("status") == "active" }.map { it.optString("activated_number_id") }.toSet()
-    val numbers = data.related.array("numbers").objects().filter { it.optString("activation_code").isBlank() && it.optString("id") !in protections && it.optString("status") == "inactive" }
-    val balance = data.related["balance"]?.optJSONObject(0)?.optLong("balance_points", -1L) ?: -1L
-    val subscriberReady = data.related["subscriber"]?.length() ?: 0 > 0
-    val selected = numbers.firstOrNull { it.optString("id") == phoneId }
-    val providerId = selected?.optJSONObject("phone_numbers")?.optString("provider_id").orEmpty()
-    val estimateAt = java.time.Instant.now()
-    val tariff = data.related.array("tariffs").objects().filter {
-        it.optString("provider_id") == providerId && it.optString("status", "active") == "active" &&
-            runCatching { java.time.Instant.parse(it.optString("effective_from")).let { start -> !start.isAfter(estimateAt) } }.getOrDefault(false) &&
-            (it.optString("effective_to").isBlank() || runCatching { java.time.Instant.parse(it.optString("effective_to")).isAfter(estimateAt) }.getOrDefault(false))
+    val packages = data.related.array("packages").objects().filter { (it.optString("name") + it.optString("description")).contains(packageQuery.trim(), true) }
+    val purchases = data.related.array("purchases").objects().filter { row ->
+        (row.optString("public_purchase_code") + row.optString("status") + row.optString("submitted_at")).contains(purchaseQuery.trim(), true) &&
+            (purchaseStatus == "الكل" || row.optString("status").equals(when (purchaseStatus) { "قيد المراجعة" -> "PENDING"; "معتمد" -> "APPROVED"; else -> "REJECTED" }, true))
     }
-        .maxByOrNull { it.optString("effective_from") }
-    val daily = tariff?.optInt("points_per_day", 0) ?: 0
-    val days = daysText.toIntOrNull() ?: 0
-    val cost = com.aman.customer.data.activationCost(days, daily)
-    SectionTitle("تفعيل حماية رقم", "اختيار رقم غير محمي · مدة بالأيام · التكلفة تُحتسب وفق التعرفة المتاحة، ويعيد الخادم التحقق ذريًا.")
-    NoticeBanner("الاختيار المحلي لا يثبت أن الرقم غير محمي لدى مستخدم آخر؛ تحقق الخادم هو المعتمد ولا يحدث خصم عند رفضه.", true)
-    SelectJsonItem("رقم غير محمي مرتبط بحسابك", numbers, phoneId, { row -> row.optJSONObject("phone_numbers")?.let { p -> p.optString("phone_e164").ifBlank { p.optString("normalized_phone") } } ?: "رقم غير متاح" }, { row -> phoneId = row.optString("id") }, "C07.PHONE.SELECT")
-    OutlinedTextField(daysText, { daysText = it.filter(Char::isDigit) }, Modifier.fillMaxWidth().traceElement("C07.DURATION.INPUT"), label = { Text("مدة الحماية بالأيام") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-    KeyValue("الرصيد الحالي", if (balance < 0) "غير متاح" else "$balance نقطة")
-    KeyValue("تعرفة النقاط اليومية", if (daily <= 0) "غير متاحة" else "$daily نقطة/يوم")
-    KeyValue("التكلفة التقديرية", cost?.let { "$it نقطة" } ?: "أدخل رقمًا ومدة صالحة")
-    KeyValue("الرصيد بعد العملية", if (balance >= 0 && cost != null && balance >= cost) "${balance - cost} نقطة" else "غير متاح / رصيد غير كافٍ")
-    val estimatedStart = java.time.Instant.now()
-    KeyValue("بداية الحماية المتوقعة", if (days > 0) estimatedStart.toString().displayDate() else "بعد اعتماد الخادم")
-    KeyValue("نهاية الحماية المتوقعة", if (days > 0) runCatching { estimatedStart.plus(days.toLong(), java.time.temporal.ChronoUnit.DAYS).toString().displayDate() }.getOrDefault("غير متاح") else "أدخل مدة صالحة")
-    Text("التاريخ والتكلفة النهائيان يحددهما الخادم عند التأكيد.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-    if (!subscriberReady) NoticeBanner("يلزم اشتراك عميل نشط حسب عقد activate_protection.", true)
-    if (data.errorNotes.any { it.startsWith("tariffs:") }) NoticeBanner("تعذر قراءة التعرفة. قد يتطلب الوصول تطبيق عقد القراءة الإضافي الموجود في database/002_admin_contracts.sql.", true)
-    val enough = balance >= 0 && cost != null && balance >= cost
-    if (cost != null && balance >= 0 && !enough) NoticeBanner("الرصيد غير كافٍ: تحتاج $cost نقطة، والمتاح $balance. اشتر نقاطًا أولًا.", true)
-    if (!enough && cost != null && balance >= 0) OutlinedButton(onClick = { vm.navigate(CustomerScreen.POINTS) }, modifier = Modifier.traceElement("C07.ACTION.BUY_POINTS")) { Text("الانتقال إلى شراء النقاط") }
-    val enabled = !state.mutationBusy && vm.online() && phoneId.isNotBlank() && days in 1..3650 && daily > 0 && enough && subscriberReady
-    Button(onClick = { confirm = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().traceElement("C07.ACTION.CONFIRM")) { Text(if (!vm.online()) "يلزم اتصال لتفعيل الحماية" else "مراجعة وتأكيد التفعيل") }
-    if (numbers.isEmpty()) EmptyPanel("لا توجد أرقام مرشحة غير مفعلة. أضف رقمًا إلى حسابك أولًا، ثم حدّث هذه الشاشة.")
-    if (confirm) ConfirmAction("تأكيد تفعيل الحماية؟", "سيعيد الخادم احتساب التكلفة والرصيد، ثم يخصم النقاط وينشئ الحماية وخطة المهام في معاملة واحدة. التكلفة المقدرة: ${cost ?: "—"} نقطة.", { confirm = false }, {
-        confirm = false; vm.activate(phoneId, days)
-    }, state.mutationBusy)
+    val methods = data.related.array("methods").objects()
+    SectionTitle("شراء النقاط", "يُنشأ الطلب بحالة PENDING. لا يُضاف الرصيد قبل اعتماد الطلب من الإدارة.")
+    val balance = data.related.array("balance").optJSONObject(0)?.let { it.opt("balance") ?: it.opt("balance_points") }?.toString().orEmpty()
+    KeyValue("الرصيد الحالي", if (balance.isBlank()) "غير متاح" else "$balance نقطة")
+    OutlinedTextField(packageQuery, { packageQuery = it }, Modifier.fillMaxWidth().traceElement("C06.PACKAGE_SEARCH"), label = { Text("بحث في الباقات") }, singleLine = true)
+    JsonItemMenu("الباقة", packages, packageId, { row -> "${row.optString("name")} · ${row.optString("points")} نقطة · ${row.optString("price")} ${row.optString("currency")}" }, { packageId = it.optString("id") }, "C06.PACKAGE")
+    JsonItemMenu("وسيلة الدفع", methods, methodId, { it.optString("name") }, { methodId = it.optString("id") }, "C06.METHOD")
+    methods.firstOrNull { it.optString("id") == methodId }?.let { method ->
+        if (method.optString("transfer_instructions").isNotBlank()) KeyValue("التعليمات", method.optString("transfer_instructions"))
+        if (method.optString("receiving_account").isNotBlank()) KeyValue("بيانات الاستلام", method.optString("receiving_account"))
+    }
+    OutlinedTextField(reference, { reference = it }, Modifier.fillMaxWidth().traceElement("C06.REFERENCE"), label = { Text("مرجع التحويل") }, singleLine = true)
+    Button(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth().traceElement("C06.SUBMIT"),
+        enabled = !state.mutationBusy && packageId.isNotBlank() && methodId.isNotBlank() && reference.isNotBlank() && vm.online()) { Text("مراجعة وإرسال الطلب") }
+    if (packages.isEmpty() || methods.isEmpty()) EmptyPanel("لا تتوفر باقات أو وسائل دفع نشطة.")
+    SectionTitle("طلبات الشراء")
+    OutlinedTextField(purchaseQuery, { purchaseQuery = it }, Modifier.fillMaxWidth().traceElement("C06.PURCHASE_SEARCH"), label = { Text("بحث في الطلبات") }, singleLine = true)
+    SimpleMenu("حالة الطلب", listOf("الكل", "قيد المراجعة", "معتمد", "مرفوض"), purchaseStatus, { purchaseStatus = it }, "C06.PURCHASE_FILTER")
+    if (purchases.isEmpty()) EmptyPanel(if (data.related.array("purchases").length() == 0) "لا توجد طلبات شراء مسجلة." else "لا توجد طلبات مطابقة.")
+    purchases.forEach { row -> DataCard(toCustomerRecord("points_purchase", row), traceId = "C06.PURCHASES") }
+    if (confirm) ConfirmAction("تأكيد طلب شراء النقاط؟", "تأكد من إتمام التحويل خارجيًا. الطلب لا يضيف نقاطًا إلا بعد الاعتماد.",
+        { confirm = false }, { confirm = false; vm.submitPurchase(packageId, methodId, reference) }, state.mutationBusy)
 }
 
 @Composable
-private fun ExtendScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
-    var protectionId by rememberSaveable { mutableStateOf("") }
-    var daysText by rememberSaveable { mutableStateOf("") }
-    var confirm by remember { mutableStateOf(false) }
-    val allProtections = data.related.array("protections").objects()
-    val now = System.currentTimeMillis()
-    val protections = allProtections.filter { it.optString("status") == "active" && runCatching { java.time.Instant.parse(it.optString("expires_at")).toEpochMilli() > now }.getOrDefault(false) }
-    val expired = allProtections.filter { it.optString("status") == "expired" || (it.optString("status") == "active" && runCatching { java.time.Instant.parse(it.optString("expires_at")).toEpochMilli() <= now }.getOrDefault(false)) }
-    val balance = data.related["balance"]?.optJSONObject(0)?.optLong("balance_points", -1L) ?: -1L
-    val selected = protections.firstOrNull { it.optString("id") == protectionId }
-    val daily = selected?.optInt("points_per_day_snapshot", 0) ?: 0
-    val days = daysText.toIntOrNull() ?: 0
-    val cost = com.aman.customer.data.activationCost(days, daily)
-    val remaining = selected?.optString("expires_at").orEmpty()
-    SectionTitle("تمديد الحماية", "الأيام تضاف إلى تاريخ الانتهاء الحالي، والتكلفة من Snapshot التعرفة المحفوظ للحماية.")
-    SelectJsonItem("حماية نشطة مرتبطة بحسابك", protections, protectionId, { row ->
-        val phone = row.optJSONObject("phone_numbers")?.optString("phone_e164").orEmpty()
-        "$phone · ينتهي ${row.optString("expires_at").displayDate()}"
-    }, { protectionId = it.optString("id") }, "C08.PROTECTION.SELECT")
-    OutlinedTextField(daysText, { daysText = it.filter(Char::isDigit) }, Modifier.fillMaxWidth().traceElement("C08.DURATION.INPUT"), label = { Text("أيام التمديد") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-    KeyValue("تاريخ الانتهاء الحالي", remaining.displayDate().ifBlank { "غير متاح" })
-    KeyValue("التعرفة اليومية", if (daily > 0) "$daily نقطة/يوم" else "غير متاحة")
-    KeyValue("تكلفة التمديد", cost?.let { "$it نقطة" } ?: "أدخل مدة صالحة")
-    KeyValue("الرصيد بعد العملية", if (balance >= 0 && cost != null && balance >= cost) "${balance - cost} نقطة" else "غير متاح / رصيد غير كافٍ")
-    KeyValue("تاريخ الانتهاء الجديد المتوقع", if (days > 0 && remaining.isNotBlank()) runCatching {
-        java.time.Instant.parse(remaining).plus(days.toLong(), java.time.temporal.ChronoUnit.DAYS).toString().displayDate()
-    }.getOrDefault("غير متاح") else "أدخل مدة صالحة")
-    Text("التاريخ والتكلفة الفعليان يؤكدهما الخادم ضمن عملية التمديد الذرية.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-    val enough = balance >= 0 && cost != null && balance >= cost
-    if (cost != null && balance >= 0 && !enough) {
-        NoticeBanner("الرصيد غير كافٍ. تحتاج $cost نقطة والمتاح $balance.", true)
-        OutlinedButton(onClick = { vm.navigate(CustomerScreen.POINTS) }, modifier = Modifier.traceElement("C08.ACTION.BUY_POINTS")) { Text("شراء نقاط") }
+private fun PointsHistoryScreen(data: CustomerScreenData) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var direction by rememberSaveable { mutableStateOf("الكل") }
+    var selected by rememberSaveable { mutableStateOf("") }
+    val rows = data.related.array("ledger").objects().filter { row ->
+        val searchable = listOf(row.optString("entry_type"), row.optString("description"), row.optString("source_type"), row.optString("amount"), row.optString("created_at")).joinToString(" ")
+        searchable.contains(query.trim(), true) && (direction == "الكل" || (direction == "إضافة" && row.optString("direction").equals("CREDIT", true)) || (direction == "استخدام" && row.optString("direction").equals("DEBIT", true)))
     }
-    Button(onClick = { confirm = true }, enabled = !state.mutationBusy && vm.online() && protectionId.isNotBlank() && days in 1..3650 && daily > 0 && enough, modifier = Modifier.fillMaxWidth().traceElement("C08.ACTION.CONFIRM")) { Text("مراجعة وتأكيد التمديد") }
-    if (protections.isEmpty()) EmptyPanel("لا توجد حماية نشطة يملكها حسابك لتمديدها.")
-    if (confirm) ConfirmAction("تأكيد تمديد الحماية؟", "سيخصم الخادم $cost نقطة ويضيف $days يومًا إلى تاريخ الانتهاء ثم يعيد بناء الخطة المستقبلية.", { confirm = false }, {
-        confirm = false; vm.extend(protectionId, days)
-    }, state.mutationBusy)
-    SectionTitle("حمايات منتهية قابلة للتجديد", "ينشئ التجديد فترة حماية جديدة مع الاحتفاظ بمعرّف التفعيل X وسجل الحماية السابق.")
-    if (expired.isEmpty()) EmptyPanel("لا توجد حماية منتهية قابلة للتجديد.")
-    expired.forEach { row ->
-        val activationId = row.optString("activated_number_id")
-        val activationCode = row.optString("activation_code")
-        val phone = row.optJSONObject("phone_numbers")?.optString("phone_e164").orEmpty()
-        var renewalDays by rememberSaveable(activationId) { mutableStateOf("30") }
-        val daysToRenew = renewalDays.toIntOrNull() ?: 0
-        val dailyPoints = row.optInt("points_per_day_snapshot", 0)
-        val renewalCost = com.aman.customer.data.activationCost(daysToRenew, dailyPoints)
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                KeyValue("الرقم", phone)
-                KeyValue("معرّف التفعيل", activationCode.ifBlank { "غير متاح" })
-                KeyValue("انتهت في", row.optString("expires_at").displayDate())
-                OutlinedTextField(renewalDays, { renewalDays = it.filter(Char::isDigit).take(4) }, Modifier.fillMaxWidth(), label = { Text("مدة التجديد بالأيام") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-                KeyValue("التكلفة التقديرية", renewalCost?.let { "$it نقطة" } ?: "مدة غير صالحة")
-                KeyValue("الرصيد المتبقي بعد التجديد", if (balance >= 0 && renewalCost != null && balance >= renewalCost) "${balance - renewalCost} نقطة" else "رصيد غير كافٍ أو غير متاح")
-                val canRenew = activationId.isNotBlank() && daysToRenew in 1..3650 && renewalCost != null && balance >= renewalCost && vm.online() && !state.mutationBusy
-                Button(onClick = { vm.renew(activationId, daysToRenew) }, enabled = canRenew, modifier = Modifier.fillMaxWidth().traceElement("C08.ACTION.RENEW")) { Text("تأكيد تجديد الحماية") }
+    SectionTitle("حركة النقاط", "سجل تاريخي غير قابل للتعديل؛ التصفية تخص القائمة المعروضة فقط.")
+    OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().traceElement("C07.SEARCH"), label = { Text("بحث في الحركة") }, singleLine = true)
+    SimpleMenu("نوع الحركة", listOf("الكل", "إضافة", "استخدام"), direction, { direction = it }, "C07.FILTER")
+    if (rows.isEmpty()) EmptyPanel(if (data.related.array("ledger").length() == 0) "لا توجد حركات نقاط." else "لا توجد نتائج مطابقة.")
+    rows.forEach { row ->
+        val record = toCustomerRecord("points_ledger", row)
+        DataCard(record, traceId = "C07.LIST", onClick = { selected = row.optString("id") })
+        if (selected == row.optString("id")) Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                SectionTitle("تفاصيل الحركة")
+                KeyValue("النوع", row.optString("entry_type"))
+                KeyValue("الاتجاه", row.optString("direction"))
+                KeyValue("المبلغ", row.optString("amount"))
+                KeyValue("الرصيد قبل", row.optString("balance_before"))
+                KeyValue("الرصيد بعد", row.optString("balance_after"))
+                KeyValue("التاريخ", formatDate(row.optString("created_at")))
+                KeyValue("المرجع", row.optString("source_type") + " · " + row.optString("source_id"))
             }
         }
     }
 }
 
 @Composable
-private fun AlertListScreen(data: CustomerScreenData, vm: CustomerViewModel) {
-    SectionTitle("تنبيهات الإدارة", "رسائل الإدارة منفصلة عن إشعارات النظام.")
-    if (data.records.isEmpty()) EmptyPanel("لا توجد تنبيهات إدارية لحسابك.")
-    data.records.forEach { record -> DataCard(record, trailing = if (!record.raw.optBoolean("is_read", false)) "غير مقروء" else "مقروء", onClick = { if (!record.raw.optBoolean("is_read", false)) vm.markRead(record.id) }, traceId = "C09.LIST") }
+private fun AddedNumbersScreen(data: CustomerScreenData, vm: CustomerViewModel) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var statusFilter by rememberSaveable { mutableStateOf("الكل") }
+    val rows = data.related.array("numbers").objects().filter { row ->
+        (row.optString("display_phone") + row.optString("public_added_number_code") + row.optString("status")).contains(query.trim(), true) &&
+            (statusFilter == "الكل" || row.optString("status").equals(when (statusFilter) { "نشط" -> "ACTIVE"; "مؤرشف" -> "ARCHIVED"; else -> "INACTIVE" }, true))
+    }
+    SectionTitle("الأرقام المضافة", "قائمة قراءة فقط؛ التعديل والأرشفة والتفعيل تتم من الإجراء المرتبط بالسجل.")
+    OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().traceElement("C08.SEARCH"), label = { Text("بحث في الأرقام") }, singleLine = true)
+    SimpleMenu("الحالة", listOf("الكل", "نشط", "غير نشط", "مؤرشف"), statusFilter, { statusFilter = it }, "C08.FILTER")
+    if (rows.isEmpty()) EmptyPanel(if (data.related.array("numbers").length() == 0) "لا توجد أرقام مضافة." else "لا توجد نتائج مطابقة.")
+    rows.forEach { row ->
+        DataCard(toCustomerRecord("customer_number", row), traceId = "C08.LIST")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = { vm.editCustomerNumber(row.optString("id")) }, modifier = Modifier.weight(1f)) { Text("تعديل · C05") }
+            TextButton(onClick = { vm.beginActivation(row.optString("id")) }, modifier = Modifier.weight(1f)) { Text("تفعيل · C11") }
+        }
+    }
+}
+
+@Composable
+private fun ProtectionListScreen(data: CustomerScreenData, vm: CustomerViewModel, expired: Boolean) {
+    var query by rememberSaveable(expired) { mutableStateOf("") }
+    var companyFilter by rememberSaveable(expired) { mutableStateOf("كل الشركات") }
+    val allRows = data.related.array("protections").objects().filter { it.optString("effective_status").equals(if (expired) "EXPIRED" else "ACTIVE", true) }
+    val companies = allRows.map { it.optString("company_name").ifBlank { "غير محددة" } }.distinct().sorted()
+    val rows = data.related.array("protections").objects().filter { row ->
+        row.optString("effective_status").equals(if (expired) "EXPIRED" else "ACTIVE", true) &&
+            (row.optString("display_phone") + row.optString("company_name") + row.optString("public_activation_code")).contains(query.trim(), true) &&
+            (companyFilter == "كل الشركات" || row.optString("company_name").ifBlank { "غير محددة" } == companyFilter)
+    }
+    SectionTitle(if (expired) "الأرقام المنتهية" else "الأرقام النشطة", "الحالة وتاريخ الانتهاء مصدرهما الخادم.")
+    OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().traceElement(if (expired) "C10.SEARCH" else "C09.SEARCH"), label = { Text("بحث") }, singleLine = true)
+    SimpleMenu("شركة الاتصالات", listOf("كل الشركات") + companies, companyFilter, { companyFilter = it }, if (expired) "C10.FILTER" else "C09.FILTER")
+    if (rows.isEmpty()) EmptyPanel(if (expired) "لا توجد حماية منتهية." else "لا توجد حماية نشطة.")
+    rows.forEach { row ->
+        DataCard(toCustomerRecord("protection_period", row), traceId = if (expired) "C10.LIST" else "C09.LIST")
+        Text("الشركة: ${row.optString("company_name").ifBlank { "غير متاحة" }} · المدة: ${row.optString("duration_days")} يوم", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = { if (expired) vm.beginRenewal(row.optString("id")) else vm.beginExtension(row.optString("id")) },
+            modifier = Modifier.traceElement(if (expired) "C10.RENEW" else "C09.EXTEND")) {
+            Text(if (expired) "تجديد الحماية · C13" else "تمديد الحماية · C12")
+        }
+    }
+}
+
+@Composable
+private fun ProtectionActionScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel, mode: CustomerScreen) {
+    val isActivation = mode == CustomerScreen.ACTIVATE
+    val isExtension = mode == CustomerScreen.EXTEND
+    val code = mode.id
+    val chosenId = if (isActivation) vm.selectedCustomerNumberId.orEmpty() else vm.selectedProtectionPeriodId.orEmpty()
+    var targetQuery by rememberSaveable(code) { mutableStateOf("") }
+    val candidates = data.related.array(if (isActivation) "candidates" else "protections").objects()
+        .filter { row ->
+            if (isActivation) true else row.optString("effective_status").equals(if (isExtension) "ACTIVE" else "EXPIRED", true)
+        }
+        .filter { row -> (row.optString("display_phone") + row.optString("company_name") + row.optString("public_activation_code")).contains(targetQuery.trim(), true) }
+    var targetId by rememberSaveable(code) { mutableStateOf(chosenId) }
+    var tariffId by rememberSaveable(code) { mutableStateOf("") }
+    var units by rememberSaveable(code) { mutableStateOf("1") }
+    var confirm by remember { mutableStateOf(false) }
+    val target = candidates.firstOrNull { it.optString(if (isActivation) "customer_number_id" else "id") == targetId }
+    val tariffs = data.related.array("tariffs").objects().filter { tariff ->
+        target == null || tariff.optString("telecom_company_id").isBlank() || tariff.optString("telecom_company_id") == target.optString("telecom_company_id")
+    }
+    val tariff = tariffs.firstOrNull { it.optString("id") == tariffId } ?: tariffs.firstOrNull()
+    val unitCount = units.toIntOrNull()?.takeIf { it in 1..120 }
+    val unitDays = tariff?.optInt("duration_unit_days", 0) ?: 0
+    val pointsPerUnit = tariff?.optLong("points_per_unit", 0L) ?: 0L
+    val quote = if (unitCount != null) calculateProtectionQuote(unitDays, pointsPerUnit, unitCount) else null
+    val durationDays = quote?.durationDays
+    val cost = quote?.pointsCost
+    val balance = data.related.array("balance").optJSONObject(0)?.optLong("balance", -1L) ?: -1L
+    val endPreview = target?.optString("end_at").orEmpty().takeIf(String::isNotBlank)?.let { oldEnd ->
+        runCatching {
+            val start = if (isExtension) java.time.Instant.parse(oldEnd).atZone(java.time.ZoneId.systemDefault()).toLocalDate() else LocalDate.now()
+            start.plusDays((durationDays ?: 0).toLong()).toString()
+        }.getOrNull()
+    }
+    val title = when (mode) { CustomerScreen.ACTIVATE -> "تفعيل الحماية"; CustomerScreen.EXTEND -> "تمديد الحماية"; else -> "تجديد الحماية" }
+    SectionTitle(title, "تختار عدد وحدات كاملة فقط؛ الأيام والتكلفة تُحسب من تعرفة الشركة المحفوظة على الخادم.")
+    if (candidates.isEmpty()) EmptyPanel(if (targetQuery.isNotBlank()) "لا توجد نتائج مطابقة للبحث." else when (mode) {
+        CustomerScreen.ACTIVATE -> "لا توجد أرقام مؤهلة للتفعيل. أضف رقمًا أولًا، وتأكد من أهلية الحساب."
+        CustomerScreen.EXTEND -> "لا توجد حماية نشطة مؤهلة للتمديد."
+        else -> "لا توجد حماية منتهية مؤهلة للتجديد."
+    })
+    if (candidates.isNotEmpty()) {
+        OutlinedTextField(targetQuery, { targetQuery = it }, Modifier.fillMaxWidth().traceElement("$code.TARGET_SEARCH"), label = { Text("بحث في الأرقام") }, singleLine = true)
+        JsonItemMenu(if (isActivation) "رقم غير محمي" else "فترة الحماية", candidates,
+            targetId, { row -> row.optString("display_phone").ifBlank { row.optString("public_activation_code") } + " · " + row.optString("company_name") },
+            { row -> targetId = row.optString(if (isActivation) "customer_number_id" else "id") }, "$code.TARGET")
+        if (target != null) {
+            KeyValue("الشركة", target.optString("company_name"))
+            if (target.optString("start_at").isNotBlank()) KeyValue("بداية الفترة", formatDate(target.optString("start_at")))
+            if (target.optString("end_at").isNotBlank()) KeyValue("الانتهاء الحالي", formatDate(target.optString("end_at")))
+        }
+        if (tariffs.isEmpty()) NoticeBanner("لا توجد تعرفة نشطة ومهيأة لهذه الشركة.", true)
+        else {
+            JsonItemMenu("تعرفة الوحدة", tariffs, tariff?.optString("id").orEmpty(), { row ->
+                "${row.optString("tariff_mode")} · ${row.optString("duration_unit_days")} يوم · ${row.optString("points_per_unit")} نقطة"
+            }, { tariffId = it.optString("id") }, "$code.TARIFF")
+            OutlinedTextField(units, { units = it.filter(Char::isDigit).take(3) }, Modifier.fillMaxWidth().traceElement("$code.UNITS"),
+                label = { Text("عدد وحدات التعرفة (1–120)") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+            KeyValue("مدة الوحدة", if (unitDays > 0) "$unitDays يوم" else "غير مهيأة")
+            KeyValue("سعر الوحدة", if (pointsPerUnit > 0) "$pointsPerUnit نقطة" else "غير مهيأ")
+            KeyValue("المدة الإجمالية", durationDays?.let { "$it يوم" } ?: "أدخل عدد وحدات صحيحًا")
+            KeyValue("التكلفة الإجمالية", cost?.let { "$it نقطة" } ?: "التعرفة غير مكتملة")
+            KeyValue("رصيد النقاط", if (balance >= 0) "$balance نقطة" else "غير متاح")
+            if (isExtension || mode == CustomerScreen.RENEW) endPreview?.let { KeyValue("تاريخ الانتهاء المتوقع", it) }
+        }
+        if (cost != null && balance >= 0 && cost > balance) NoticeBanner("رصيد النقاط غير كافٍ؛ لم يُرسل أي طلب خصم.", true)
+        val ready = !state.mutationBusy && targetId.isNotBlank() && tariff?.optString("id").orEmpty().isNotBlank() &&
+            unitCount != null && durationDays != null && cost != null && balance >= cost && vm.online()
+        Button(onClick = { confirm = true }, modifier = Modifier.fillMaxWidth().traceElement("$code.CONFIRM"), enabled = ready) { Text("${title} · مراجعة التكلفة") }
+        if (confirm) ConfirmAction(
+            "تأكيد $title؟",
+            "الوحدة ${tariff?.optString("tariff_mode")} · $unitCount وحدة · $durationDays يوم · $cost نقطة. سيعيد الخادم التحقق من التعرفة والرصيد والملكية قبل أي تغيير.",
+            { confirm = false },
+            {
+                confirm = false
+                when (mode) {
+                    CustomerScreen.ACTIVATE -> vm.activate(targetId, tariff?.optString("id").orEmpty(), unitCount ?: 0)
+                    CustomerScreen.EXTEND -> vm.extend(targetId, tariff?.optString("id").orEmpty(), unitCount ?: 0)
+                    else -> vm.renew(targetId, tariff?.optString("id").orEmpty(), unitCount ?: 0)
+                }
+            }, state.mutationBusy,
+        )
+    }
+}
+
+@Composable
+private fun NotificationsScreen(data: CustomerScreenData, vm: CustomerViewModel) {
+    var query by rememberSaveable { mutableStateOf("") }
+    var readFilter by rememberSaveable { mutableStateOf("الكل") }
+    val rows = data.related.array("notifications").objects().filter { row ->
+        (row.optString("title") + row.optString("body")).contains(query.trim(), true) &&
+            (readFilter == "الكل" || row.optBoolean("is_read", false) == (readFilter == "مقروء"))
+    }
+    SectionTitle("إشعارات النظام", "كل إشعار يشير إلى مصدره التجاري ولا يحل محله.")
+    OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().traceElement("C14.SEARCH"), label = { Text("بحث في الإشعارات") }, singleLine = true)
+    SimpleMenu("حالة القراءة", listOf("الكل", "مقروء", "غير مقروء"), readFilter, { readFilter = it }, "C14.FILTER")
+    if (rows.isEmpty()) EmptyPanel("لا توجد إشعارات مطابقة.")
+    rows.forEach { row ->
+        DataCard(toCustomerRecord("customer_notification", row), traceId = "C14.LIST")
+        if (!row.optBoolean("is_read", false)) TextButton(onClick = { vm.markNotificationRead(row.optString("id")) }) { Text("تحديد كمقروء") }
+    }
 }
 
 @Composable
 private fun SupportScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
+    var selectedId by rememberSaveable { mutableStateOf("") }
+    var newConversation by rememberSaveable { mutableStateOf(false) }
     var subject by rememberSaveable { mutableStateOf("") }
     var body by rememberSaveable { mutableStateOf("") }
-    var newConversation by rememberSaveable { mutableStateOf(data.records.isEmpty()) }
-    var verificationRequired by rememberSaveable { mutableStateOf(false) }
-    var uncertainAt by rememberSaveable { mutableStateOf(data.loadedAt) }
-    LaunchedEffect(state.mutationMessage) {
-        if (state.mutationMessage?.startsWith("تعذر تأكيد نتيجة العملية") == true || state.mutationMessage?.startsWith("تعذر تنفيذ العملية") == true) {
-            verificationRequired = true
-            uncertainAt = data.loadedAt
-        }
+    var threadQuery by rememberSaveable { mutableStateOf("") }
+    var threadStatus by rememberSaveable { mutableStateOf("الكل") }
+    val messages = data.related.array("messages").objects()
+    val thread = data.related.array("threads").objects().firstOrNull { it.optString("id") == selectedId }
+    val threadRows = data.related.array("threads").objects().filter { row ->
+        (row.optString("subject") + row.optString("status") + row.optString("id")).contains(threadQuery.trim(), true) &&
+            (threadStatus == "الكل" || row.optString("status").equals(if (threadStatus == "مفتوحة") "OPEN" else "CLOSED", true))
     }
-    LaunchedEffect(data.loadedAt) { if (verificationRequired && data.loadedAt > uncertainAt) verificationRequired = false }
-    val selectedId = if (newConversation) "" else data.selectedThreadId ?: data.records.firstOrNull()?.id.orEmpty()
-    val selectedThread = data.records.firstOrNull { it.id == selectedId }
     LaunchedEffect(state.mutationMessage) {
         when (state.mutationMessage) {
-            "تم إرسال الرسالة وإنشاء محادثة الدعم." -> { newConversation = false; subject = ""; body = "" }
+            "تم إنشاء المحادثة وإرسال الرسالة الأولى." -> { newConversation = false; subject = ""; body = "" }
             "تم إرسال الرسالة إلى المحادثة." -> body = ""
+            "تم إغلاق المحادثة." -> selectedId = ""
         }
     }
-    SectionTitle("تواصل مع الإدارة", "رسائل AMAN الداخلية فقط؛ لا نفترض قناة خارجية.")
-    if (!vm.online()) NoticeBanner("لا يوجد اتصال. لم تُرسل الرسالة ولم تُحفظ في outbox؛ عقد الدعم لا يوفر مفتاح idempotency آمنًا لإعادة الإرسال تلقائيًا.", true)
-    else NoticeBanner("إذا انقطع الاتصال أثناء الإرسال وظهرت نتيجة غير مؤكدة، حدّث المحادثة وتحقق من ظهور الرسالة قبل المحاولة مجددًا لتجنب التكرار.", false)
-    if (verificationRequired) NoticeBanner("إعادة الإرسال موقوفة مؤقتًا: حدّث سجل الخادم وتأكد أولًا من عدم وصول الرسالة السابقة.", true)
-    OutlinedButton(onClick = { vm.load(CustomerScreen.SUPPORT) }, modifier = Modifier.fillMaxWidth().traceElement("C10.ACTION.REFRESH"), enabled = !state.mutationBusy) { Text("تحديث سجل المحادثات") }
-    if (data.records.isNotEmpty()) {
-        SectionTitle("محادثات الدعم")
-        data.records.forEach { record -> DataCard(record, trailing = record.subtitle, onClick = { newConversation = false; vm.openSupportThread(record.id) }, traceId = "C10.THREAD.LIST") }
-        OutlinedButton(onClick = { newConversation = true; vm.clearSupportSelection(); subject = ""; body = "" }, modifier = Modifier.fillMaxWidth().traceElement("C10.ACTION.NEW")) { Text("بدء محادثة جديدة") }
+    SectionTitle("تواصل أمان", "الدعم ورسائل الإدارة قناتان مختلفتان عن إشعارات النظام.")
+    val inbox = data.related.array("admin_messages").objects()
+    if (inbox.isNotEmpty()) {
+        SectionTitle("رسائل الإدارة")
+        inbox.forEach { message ->
+            DataCard(toCustomerRecord("admin_message", message), traceId = "C15.ADMIN_MESSAGES")
+            if (!message.optBoolean("is_read", false)) TextButton(onClick = { vm.markAdminMessageRead(message.optString("id")) }) { Text("تحديد كمقروء") }
+        }
     }
-    if (selectedThread != null && !newConversation) {
-        SectionTitle(selectedThread.title, if (selectedThread.raw.optString("status") == "open") "المحادثة مفتوحة" else "المحادثة مغلقة")
-        val messages = data.related.array("messages").objects().filter { it.optString("thread_id") == selectedId }
-        if (data.messagesLoading) CircularProgressIndicator()
-        if (messages.isEmpty() && !data.messagesLoading) EmptyPanel("لا توجد رسائل محملة في هذه المحادثة.")
-        Column(Modifier.fillMaxWidth().traceElement("C10.THREAD.DETAIL"), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            messages.forEach { message ->
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(if (message.optString("sender_type") == "admin") "الإدارة" else "أنت", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                        Text(message.optString("body"))
-                        Text(message.optString("created_at").displayDate(), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
-                    }
+    OutlinedButton(onClick = { vm.load(CustomerScreen.SUPPORT) }, Modifier.fillMaxWidth(), enabled = !state.mutationBusy) { Text("تحديث المحادثات والرسائل") }
+    if (!newConversation && threadRows.isNotEmpty()) {
+        SectionTitle("محادثات الدعم")
+        OutlinedTextField(threadQuery, { threadQuery = it }, Modifier.fillMaxWidth().traceElement("C15.THREAD_SEARCH"), label = { Text("بحث في المحادثات") }, singleLine = true)
+        SimpleMenu("حالة المحادثة", listOf("الكل", "مفتوحة", "مغلقة"), threadStatus, { threadStatus = it }, "C15.THREAD_FILTER")
+        threadRows.forEach { row ->
+            DataCard(toCustomerRecord("support_conversation", row), traceId = "C15.THREADS", onClick = { selectedId = row.optString("id"); newConversation = false })
+        }
+        OutlinedButton(onClick = { selectedId = ""; newConversation = true; subject = ""; body = "" }) { Text("طلب دعم جديد") }
+    } else if (!newConversation && data.related.array("threads").length() > 0) {
+        OutlinedTextField(threadQuery, { threadQuery = it }, Modifier.fillMaxWidth().traceElement("C15.THREAD_SEARCH"), label = { Text("بحث في المحادثات") }, singleLine = true)
+        SimpleMenu("حالة المحادثة", listOf("الكل", "مفتوحة", "مغلقة"), threadStatus, { threadStatus = it }, "C15.THREAD_FILTER")
+        EmptyPanel("لا توجد محادثات مطابقة.")
+        OutlinedButton(onClick = { selectedId = ""; newConversation = true; subject = ""; body = "" }) { Text("طلب دعم جديد") }
+    } else if (!newConversation) {
+        EmptyPanel("لا توجد محادثات دعم. يمكنك بدء طلب جديد.")
+        OutlinedButton(onClick = { newConversation = true; subject = ""; body = "" }) { Text("طلب دعم جديد") }
+    }
+    if (thread != null && !newConversation) {
+        SectionTitle(thread.optString("subject").ifBlank { "محادثة الدعم" }, "الحالة: ${thread.optString("status")}")
+        val currentMessages = messages.filter { it.optString("conversation_id") == selectedId }
+        if (currentMessages.isEmpty()) EmptyPanel("لا توجد رسائل محملة في المحادثة.")
+        currentMessages.forEach { message ->
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(if (message.optString("sender_type").equals("CUSTOMER", true)) "أنت" else "أمان", color = MaterialTheme.colorScheme.primary)
+                    Text(message.optString("body"))
+                    Text(formatDate(message.optString("sent_at")), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
-    } else if (data.records.isEmpty()) EmptyPanel("لا توجد محادثات دعم مسجلة؛ يمكنك بدء محادثة جديدة.")
-    if (newConversation) OutlinedTextField(subject, { subject = it }, Modifier.fillMaxWidth().traceElement("C10.SUBJECT.INPUT"), label = { Text("الموضوع") }, singleLine = true)
-    OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth().height(125.dp).traceElement("C10.MESSAGE.INPUT"), label = { Text(if (newConversation) "نص الرسالة الأولى" else "اكتب ردك") })
-    if (state.mutationBusy) Text("جارٍ إرسال الرسالة…", color = MaterialTheme.colorScheme.primary)
-    val canReply = newConversation || selectedThread?.raw?.optString("status") == "open"
-    Button(
-        onClick = { if (newConversation) vm.createSupportThread(subject, body) else vm.sendSupportMessage(selectedId, body) },
-        enabled = !state.mutationBusy && !verificationRequired && vm.online() && body.isNotBlank() && canReply && (!newConversation || subject.isNotBlank()),
-        modifier = Modifier.fillMaxWidth().traceElement("C10.ACTION.SEND"),
-    ) { Text(if (newConversation) "إنشاء المحادثة وإرسال" else "إرسال الرد") }
-    if (!newConversation && selectedThread?.raw?.optString("status") != "open") NoticeBanner("هذه المحادثة مغلقة؛ لا يمكن إرسال رد جديد.", true)
-}
-
-@Composable
-private fun NotificationScreen(data: CustomerScreenData, vm: CustomerViewModel) {
-    SectionTitle("إشعارات النظام", "فتح إشعار غير مقروء يحدّث is_read/read_at عبر RPC الكنسي لمزامنته بين الأجهزة.")
-    if (data.records.isEmpty()) EmptyPanel("لا توجد إشعارات نظام لحسابك.")
-    data.records.forEach { record -> DataCard(record, trailing = if (!record.raw.optBoolean("is_read", false)) "جديد" else "مقروء", onClick = { if (!record.raw.optBoolean("is_read", false)) vm.markRead(record.id) }, traceId = "C11.LIST") }
-}
-
-@Composable
-private fun ReportsScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
-    var categoryLabel by rememberSaveable { mutableStateOf(CustomerReportCategory.POINTS.label) }
-    var appliedCategoryLabel by rememberSaveable { mutableStateOf(CustomerReportCategory.POINTS.label) }
-    var fromDate by rememberSaveable { mutableStateOf("") }
-    var toDate by rememberSaveable { mutableStateOf("") }
-    var appliedFromDate by rememberSaveable { mutableStateOf("") }
-    var appliedToDate by rememberSaveable { mutableStateOf("") }
-    var filterError by remember { mutableStateOf<String?>(null) }
-    var exportMessage by remember { mutableStateOf<String?>(null) }
-    val context = LocalContext.current
-    val reportRows = buildCustomerReportRows(data, CustomerReportCategory.fromLabel(appliedCategoryLabel), appliedFromDate, appliedToDate)
-    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
-        if (uri == null) {
-            exportMessage = "تم إلغاء التصدير."
-        } else {
-            runCatching {
-                val output = context.contentResolver.openOutputStream(uri) ?: error("تعذر فتح ملف التصدير.")
-                OutputStreamWriter(output, Charsets.UTF_8).use { writer -> writer.write("\uFEFF"); writer.write(customerReportCsv(reportRows)) }
-            }.onSuccess { exportMessage = "تم تصدير ${reportRows.size} سجلًا إلى الملف المحدد." }
-                .onFailure { exportMessage = "تعذر حفظ التقرير: ${it.message ?: "خطأ في مزود الملفات"}" }
-        }
+        if (thread.optString("status").equals("OPEN", true)) {
+            TextButton(onClick = { vm.closeSupportConversation(selectedId) }) { Text("إغلاق المحادثة") }
+        } else NoticeBanner("المحادثة مغلقة ولا يمكن إرسال رد جديد.", true)
     }
-    SectionTitle("تقارير حسابك", "مصادر مملوكة للحساب وتسمح بها RLS؛ لا تُقرأ دفاتر الإدارة أو مهام السداد الداخلية.")
-    SimpleMenu("نوع التقرير", CustomerReportCategory.entries.map { it.label }, categoryLabel,
-        choose = { categoryLabel = it }, elementId = "C12.REPORT.CATEGORY")
-    SimpleMenu("نطاق سريع", listOf("كل الفترات", "آخر 30 يومًا", "آخر 90 يومًا"),
-        if (fromDate.isBlank() && toDate.isBlank()) "كل الفترات" else if (fromDate == java.time.LocalDate.now().minusDays(29).toString()) "آخر 30 يومًا" else "آخر 90 يومًا",
-        choose = { range ->
-            val days = when (range) { "آخر 30 يومًا" -> 30L; "آخر 90 يومًا" -> 90L; else -> 0L }
-            fromDate = if (days == 0L) "" else java.time.LocalDate.now().minusDays(days - 1).toString()
-            toDate = if (days == 0L) "" else java.time.LocalDate.now().toString()
-        }, elementId = "C12.PERIOD.QUICK")
-    OutlinedTextField(fromDate, { fromDate = it.take(10); filterError = null }, Modifier.fillMaxWidth().traceElement("C12.DATE.FROM"), label = { Text("من تاريخ (YYYY-MM-DD، اختياري)") }, singleLine = true)
-    OutlinedTextField(toDate, { toDate = it.take(10); filterError = null }, Modifier.fillMaxWidth().traceElement("C12.DATE.TO"), label = { Text("إلى تاريخ (YYYY-MM-DD، اختياري)") }, singleLine = true)
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    if (newConversation) OutlinedTextField(subject, { subject = it }, Modifier.fillMaxWidth().traceElement("C15.SUBJECT"), label = { Text("موضوع الطلب") }, singleLine = true)
+    if (newConversation || thread?.optString("status").equals("OPEN", true)) {
+        OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth().height(130.dp).traceElement("C15.MESSAGE"), label = { Text(if (newConversation) "الرسالة" else "الرد") })
         Button(onClick = {
-            if (isValidCustomerReportRange(fromDate, toDate)) {
-                appliedCategoryLabel = categoryLabel; appliedFromDate = fromDate; appliedToDate = toDate; filterError = null
-            } else filterError = "أدخل تاريخين بصيغة YYYY-MM-DD، واجعل تاريخ البداية قبل أو يساوي النهاية."
-        }, modifier = Modifier.weight(1f).traceElement("C12.ACTION.VIEW"), enabled = !state.mutationBusy) { Text("عرض التقرير") }
-        OutlinedButton(onClick = { vm.load(CustomerScreen.REPORTS) }, modifier = Modifier.weight(1f).traceElement("C12.ACTION.REFRESH"), enabled = !state.mutationBusy) { Text("تحديث البيانات") }
+            if (newConversation) vm.createSupportConversation(subject, body) else vm.sendSupportMessage(selectedId, body)
+        }, modifier = Modifier.fillMaxWidth().traceElement("C15.SEND"),
+            enabled = !state.mutationBusy && vm.online() && body.isNotBlank() && (!newConversation || subject.isNotBlank())) { Text("إرسال") }
     }
-    filterError?.let { NoticeBanner(it, true) }
-    exportMessage?.let { NoticeBanner(it, it.startsWith("تعذر")) }
-    val category = CustomerReportCategory.fromLabel(appliedCategoryLabel)
-    when (category) {
-        CustomerReportCategory.POINTS -> {
-            val pointValues = reportRows.mapNotNull { it.points.toLongOrNull() }
-            KeyValue("إضافات النقاط", "${pointValues.filter { it > 0 }.sum()} نقطة")
-            KeyValue("استخدام النقاط", "${-pointValues.filter { it < 0 }.sum()} نقطة")
-            KeyValue("صافي حركة النقاط", "${pointValues.sum()} نقطة")
-            data.related["balance"]?.optJSONObject(0)?.opt("balance_points")?.let { KeyValue("الرصيد الحالي", "$it نقطة") }
-        }
-        CustomerReportCategory.PURCHASES -> {
-            KeyValue("طلبات الشراء ضمن الفترة", reportRows.size.toString())
-            KeyValue("النقاط المطلوبة", "${reportRows.sumOf { it.points.toLongOrNull() ?: 0L }} نقطة")
-        }
-        CustomerReportCategory.PROTECTIONS -> KeyValue("عمليات التفعيل/التمديد", reportRows.size.toString())
-        CustomerReportCategory.FINANCIAL -> KeyValue("عمليات مالية مسجلة للحساب", reportRows.size.toString())
-        CustomerReportCategory.NUMBERS -> KeyValue("علاقات أرقام الحساب", reportRows.size.toString())
-    }
-    if (reportRows.isEmpty()) EmptyPanel("لا توجد بيانات فعلية ضمن الفئة والفترة المختارتين.")
-    reportRows.forEach { ReportRowCard(it) }
-    OutlinedButton(
-        onClick = {
-            if (!isValidCustomerReportRange(appliedFromDate, appliedToDate)) filterError = "نطاق التقرير غير صالح."
-            else exportLauncher.launch("aman-report-${category.name.lowercase()}-${java.time.LocalDate.now()}.csv")
-        },
-        enabled = !state.mutationBusy,
-        modifier = Modifier.fillMaxWidth().traceElement("C12.ACTION.EXPORT"),
-    ) { Text("تصدير التقرير الحالي CSV (${reportRows.size} سجل)") }
-}
-
-@Composable
-private fun ReportRowCard(row: com.aman.customer.data.CustomerReportRow) {
-    Card(Modifier.fillMaxWidth().traceElement("C12.RESULTS"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(row.type.ifBlank { row.category }, fontWeight = FontWeight.SemiBold)
-            if (row.timestamp.isNotBlank()) KeyValue("التاريخ", row.timestamp.displayDate())
-            if (row.status.isNotBlank()) KeyValue("الحالة", row.status)
-            if (row.points.isNotBlank()) KeyValue("النقاط", row.points)
-            if (row.amount.isNotBlank()) KeyValue("المبلغ", "${row.amount} ${row.currency}".trim())
-            if (row.details.isNotBlank()) Text(row.details, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun AccountScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
-    SectionTitle("حساب العميل", "بيانات الحساب من الملف المرتبط بهوية الدخول.")
-    val profile = data.related["profile"]?.optJSONObject(0)
-    val subscriber = data.related["subscriber"]?.optJSONObject(0)
-    val balance = data.related["balance"]?.optJSONObject(0)?.optString("balance_points")
-    if (profile == null) EmptyPanel("لم يُعثر على ملف profiles مرتبط بحساب المصادقة. تحقق من إعداد عقد إنشاء profile في الخلفية.")
-    profile?.let {
-        var fullName by rememberSaveable(it.optString("id")) { mutableStateOf(it.optString("full_name")) }
-        var username by rememberSaveable(it.optString("id")) { mutableStateOf(it.optString("username")) }
-        var phone by rememberSaveable(it.optString("id")) { mutableStateOf(it.optString("phone")) }
-        var newPassword by remember { mutableStateOf("") }
-        var confirmPassword by remember { mutableStateOf("") }
-        var confirmProfile by remember { mutableStateOf(false) }
-        var confirmSecurity by remember { mutableStateOf(false) }
-        LaunchedEffect(state.mutationMessage) {
-            if (state.mutationMessage == "تم حفظ بيانات الملف الشخصي.") confirmProfile = false
-            if (state.mutationMessage == "تم تحديث كلمة المرور عبر Supabase Auth.") { newPassword = ""; confirmPassword = ""; confirmSecurity = false }
-        }
-        Text("ملف الحساب", Modifier.traceElement("C13.PROFILE"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-        Text("إعدادات الحساب", Modifier.traceElement("C13.ACCOUNT.SETTINGS"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-        OutlinedTextField(fullName, { fullName = it }, Modifier.fillMaxWidth().traceElement("C13.FULL_NAME"), label = { Text("اسم العميل") }, singleLine = true)
-        OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth().traceElement("C13.USERNAME"), label = { Text("اسم المستخدم") }, singleLine = true)
-        OutlinedTextField(phone, { phone = it }, Modifier.fillMaxWidth().traceElement("C13.PHONE"), label = { Text("الهاتف بصيغة دولية؛ اختياري") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
-        Button(onClick = { confirmProfile = true }, enabled = fullName.isNotBlank() && username.isNotBlank() && !state.mutationBusy,
-            modifier = Modifier.fillMaxWidth().traceElement("C13.ACTION.SAVE")) { Text("حفظ بيانات الحساب") }
-        if (confirmProfile) ConfirmAction("حفظ بيانات الحساب؟", "سيتم تحديث الاسم واسم المستخدم ورقم الهاتف المرتبط بهوية دخولك فقط.", { confirmProfile = false }, {
-            confirmProfile = false; vm.updateProfile(fullName, username, phone)
-        }, state.mutationBusy)
-        Text("إعدادات الأمان", Modifier.traceElement("C13.SECURITY.SETTINGS"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-        OutlinedTextField(newPassword, { newPassword = it }, Modifier.fillMaxWidth().traceElement("C13.SECURITY.PASSWORD"), label = { Text("كلمة المرور الجديدة (8 أحرف على الأقل)") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), singleLine = true)
-        OutlinedTextField(confirmPassword, { confirmPassword = it }, Modifier.fillMaxWidth().traceElement("C13.SECURITY.CONFIRM"), label = { Text("تأكيد كلمة المرور الجديدة") }, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), singleLine = true)
-        Button(onClick = { confirmSecurity = true }, enabled = newPassword.length >= 8 && newPassword == confirmPassword && !state.mutationBusy,
-            modifier = Modifier.fillMaxWidth().traceElement("C13.ACTION.PASSWORD")) { Text("تحديث كلمة المرور") }
-        if (confirmSecurity) ConfirmAction("تحديث كلمة المرور؟", "سيتم إرسال كلمة المرور الجديدة مباشرة إلى Supabase Auth. لن تُخزن في قاعدة AMAN.", { confirmSecurity = false }, {
-            confirmSecurity = false; vm.updatePassword(newPassword)
-        }, state.mutationBusy)
-        KeyValue("الاسم", it.optString("full_name").ifBlank { "غير محدد" })
-        KeyValue("اسم المستخدم", it.optString("username").ifBlank { "غير محدد" })
-        KeyValue("البريد الإلكتروني", it.optString("email").ifBlank { "غير متاح" })
-        KeyValue("رقم الهاتف", it.optString("phone").ifBlank { "غير متاح" })
-        KeyValue("تاريخ الإنشاء", it.optString("created_at").displayDate())
-        KeyValue("حالة الحساب", it.optString("account_status").ifBlank { "غير متاحة" })
-    }
-    KeyValue("حالة الاشتراك", subscriber?.optString("status")?.ifBlank { "غير متاح" } ?: "غير مشترك/غير متاح")
-    KeyValue("رصيد النقاط", balance?.let { "$it نقطة" } ?: "غير متاح")
-    NoticeBanner("إعدادات كلمة المرور/الأمان غير معروضة لعدم وجود تدفق تغيير معتمد داخل المرجع. المصادقة وإدارة كلمات المرور عبر Supabase Auth.", false)
-    Button(onClick = vm::signOut, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary), modifier = Modifier.fillMaxWidth().traceElement("C13.ACTION.LOGOUT")) { Text("تسجيل الخروج") }
 }
 
 @Composable
 private fun SearchScreen(data: CustomerScreenData, vm: CustomerViewModel) {
     var query by rememberSaveable { mutableStateOf("") }
-    SectionTitle("البحث في حسابك", "الأرقام والعمليات وطلبات شراء النقاط والتنبيهات والإشعارات الخاصة بك فقط.")
-    OutlinedTextField(query, { query = it; vm.search(it) }, Modifier.fillMaxWidth().traceElement("C14.SEARCH.INPUT"), label = { Text("ابحث في بيانات حسابك") }, singleLine = true)
-    TextButton(onClick = { query = ""; vm.search("") }, modifier = Modifier.traceElement("C14.SEARCH.CLEAR")) { Text("مسح البحث") }
-    if (query.trim().length < 2) EmptyPanel("أدخل حرفين على الأقل لبدء البحث ضمن بياناتك.")
-    else if (data.records.isEmpty()) EmptyPanel("لا توجد نتائج مطابقة في البيانات المتاحة.")
+    LaunchedEffect(query) { vm.search(query) }
+    SectionTitle("البحث في حسابك", "يبحث ضمن الأرقام والمشتريات وحركة النقاط والحماية والإشعارات المملوكة لحسابك فقط.")
+    OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().traceElement("C16.QUERY"), label = { Text("اكتب رقمًا أو رمزًا أو وصفًا") }, singleLine = true)
+    if (query.trim().length < 2) EmptyPanel("أدخل حرفين على الأقل لبدء البحث.")
+    else if (data.records.isEmpty()) EmptyPanel("لا توجد نتائج مطابقة.")
     data.records.forEach { record ->
-        val destination = when (record.source) {
-            "operations", "point_ledger" -> CustomerScreen.OPERATIONS
-            "points_purchase_requests" -> CustomerScreen.POINTS
-            "system_notifications" -> CustomerScreen.NOTIFICATIONS
-            else -> CustomerScreen.INACTIVE_NUMBERS
-        }
-        DataCard(record, onClick = { vm.navigate(destination) }, traceId = "C14.RESULT.LIST")
+        DataCard(record, traceId = "C16.RESULTS", onClick = {
+            val route = when (record.source) {
+                "customer_number", "numbers" -> CustomerScreen.ADDED_NUMBERS
+                "points_purchase" -> CustomerScreen.BUY_POINTS
+                "points_ledger" -> CustomerScreen.POINTS_HISTORY
+                "protection_period" -> if (record.raw.optString("effective_status").equals("EXPIRED", true)) CustomerScreen.EXPIRED_NUMBERS else CustomerScreen.ACTIVE_NUMBERS
+                "customer_notification" -> CustomerScreen.NOTIFICATIONS
+                else -> CustomerScreen.POINTS_HISTORY
+            }
+            vm.navigate(route)
+        })
     }
 }
 
 @Composable
-private fun AboutScreen() {
-    SectionTitle("عن أمان")
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("AMAN  |  أمان", Modifier.traceElement("C15.LOGO"), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
-            Text("أمان حماية وضمان", Modifier.traceElement("C15.SERVICE.INFO"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("خدمة لإدارة حماية أرقام الاتصالات ومتابعة الاشتراك والخدمات المرتبطة بها وفق قواعد AMAN.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            KeyValue("الإصدار", "1.0.0")
-            Text("بيانات الجهة وروابط الشروط والخصوصية والتواصل الرسمي غير مضافة إلى المرجع المعتمد.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        }
+private fun ReportsScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
+    var categoryLabel by rememberSaveable { mutableStateOf(CustomerReportCategory.POINTS.label) }
+    var appliedCategory by rememberSaveable { mutableStateOf(CustomerReportCategory.POINTS.label) }
+    var fromDate by rememberSaveable { mutableStateOf("") }
+    var toDate by rememberSaveable { mutableStateOf("") }
+    var appliedFrom by rememberSaveable { mutableStateOf("") }
+    var appliedTo by rememberSaveable { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    var exportNotice by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val rows = buildCustomerReportRows(data, CustomerReportCategory.fromLabel(appliedCategory), appliedFrom, appliedTo)
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        if (uri == null) exportNotice = "تم إلغاء التصدير."
+        else runCatching {
+            val output = requireNotNull(context.contentResolver.openOutputStream(uri)) { "تعذر فتح ملف التصدير." }
+            OutputStreamWriter(output, Charsets.UTF_8).use { writer -> writer.write("\uFEFF"); writer.write(customerReportCsv(rows)) }
+        }.onSuccess { exportNotice = "تم تصدير ${rows.size} سجلًا إلى الملف الذي اخترته." }
+            .onFailure { exportNotice = "تعذر حفظ التقرير: ${it.message.orEmpty()}" }
     }
+    SectionTitle("تقارير حسابك", "نقاط ومشتريات وحماية وأرقام ونشاط؛ لا تعرض دفاتر مالية إدارية.")
+    SimpleMenu("نوع التقرير", CustomerReportCategory.entries.map { it.label }, categoryLabel, { categoryLabel = it }, "C17.CATEGORY")
+    SimpleMenu("فترة سريعة", listOf("كل الفترات", "آخر 30 يومًا", "آخر 90 يومًا"), if (fromDate.isBlank()) "كل الفترات" else "فترة محددة", {
+        val days = when (it) { "آخر 30 يومًا" -> 30L; "آخر 90 يومًا" -> 90L; else -> 0L }
+        fromDate = if (days == 0L) "" else LocalDate.now().minusDays(days - 1).toString()
+        toDate = if (days == 0L) "" else LocalDate.now().toString()
+    }, "C17.PERIOD")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(fromDate, { fromDate = it.take(10) }, Modifier.weight(1f), label = { Text("من YYYY-MM-DD") }, singleLine = true)
+        OutlinedTextField(toDate, { toDate = it.take(10) }, Modifier.weight(1f), label = { Text("إلى YYYY-MM-DD") }, singleLine = true)
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = {
+            if (isValidCustomerReportRange(fromDate, toDate)) { appliedCategory = categoryLabel; appliedFrom = fromDate; appliedTo = toDate; error = "" }
+            else error = "أدخل نطاقًا صحيحًا بصيغة YYYY-MM-DD."
+        }, Modifier.weight(1f).traceElement("C17.VIEW"), enabled = !state.mutationBusy) { Text("عرض التقرير") }
+        OutlinedButton(onClick = { vm.load(CustomerScreen.REPORTS) }, Modifier.weight(1f), enabled = !state.mutationBusy) { Text("تحديث") }
+    }
+    if (error.isNotBlank()) NoticeBanner(error, true)
+    if (exportNotice.isNotBlank()) NoticeBanner(exportNotice, exportNotice.startsWith("تعذر"))
+    KeyValue("عدد السجلات", rows.size.toString())
+    if (rows.isEmpty()) EmptyPanel("لا توجد بيانات فعلية ضمن الفئة والفترة المختارتين.")
+    rows.forEach { row -> Card(Modifier.fillMaxWidth().traceElement("C17.RESULTS"), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(row.type.ifBlank { row.category }, fontWeight = FontWeight.SemiBold)
+            KeyValue("التاريخ", formatDate(row.timestamp)); KeyValue("الحالة", row.status); KeyValue("النقاط", row.points)
+            if (row.details.isNotBlank()) Text(row.details, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        }
+    } }
+    OutlinedButton(onClick = { launcher.launch("aman-customer-report-${LocalDate.now()}.csv") }, modifier = Modifier.fillMaxWidth().traceElement("C17.EXPORT"),
+        enabled = !state.mutationBusy && isValidCustomerReportRange(appliedFrom, appliedTo)) { Text("تصدير CSV") }
 }
 
 @Composable
-private fun SelectJsonItem(label: String, options: List<JSONObject>, selectedId: String, display: (JSONObject) -> String, onSelected: (JSONObject) -> Unit, elementId: String? = null) {
+private fun AccountScreen(data: CustomerScreenData, state: CustomerUiState, vm: CustomerViewModel) {
+    val profile = data.related.array("profile").optJSONObject(0)
+    val clipboard = LocalClipboardManager.current
+    if (profile == null) { EmptyPanel("لم يُعثر على ملف عميل مرتبط بجلسة الدخول."); return }
+    var name by rememberSaveable(profile.optString("id")) { mutableStateOf(profile.optString("name")) }
+    var newPassword by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var saveConfirm by remember { mutableStateOf(false) }
+    var passwordConfirm by remember { mutableStateOf(false) }
+    LaunchedEffect(state.mutationMessage) {
+        if (state.mutationMessage == "تم حفظ الاسم.") saveConfirm = false
+        if (state.mutationMessage == "تم تحديث كلمة المرور عبر Supabase Auth.") { newPassword = ""; confirmPassword = ""; passwordConfirm = false }
+    }
+    SectionTitle("الحساب")
+    KeyValue("معرّف المستخدم", profile.optString("public_user_code"))
+    KeyValue("البريد الإلكتروني", profile.optString("email"))
+    KeyValue("نوع الحساب", profile.optString("account_type"))
+    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(profile.optString("public_user_code"))) }, Modifier.traceElement("C18.ID")) { Text("نسخ معرّف المستخدم") }
+    OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth().traceElement("C18.NAME"), label = { Text("الاسم") }, singleLine = true)
+    Button(onClick = { saveConfirm = true }, modifier = Modifier.fillMaxWidth().traceElement("C18.SAVE"), enabled = name.isNotBlank() && !state.mutationBusy) { Text("حفظ الاسم") }
+    if (saveConfirm) ConfirmAction("حفظ الاسم؟", "سيُحدّث الاسم المرتبط بحساب الدخول فقط.", { saveConfirm = false }, { saveConfirm = false; vm.updateProfile(name) }, state.mutationBusy)
+    SectionTitle("الأمان")
+    OutlinedTextField(newPassword, { newPassword = it }, Modifier.fillMaxWidth().traceElement("C18.PASSWORD"), label = { Text("كلمة مرور جديدة") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+    OutlinedTextField(confirmPassword, { confirmPassword = it }, Modifier.fillMaxWidth(), label = { Text("تأكيد كلمة المرور") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
+    Button(onClick = { passwordConfirm = true }, enabled = !state.mutationBusy && newPassword.length >= 8 && newPassword == confirmPassword) { Text("تحديث كلمة المرور") }
+    if (passwordConfirm) ConfirmAction("تحديث كلمة المرور؟", "تُحدّث في Supabase Auth ولا تُخزن في قاعدة AMAN.", { passwordConfirm = false }, { vm.updatePassword(newPassword, confirmPassword) }, state.mutationBusy)
+    TextButton(onClick = { vm.navigate(CustomerScreen.ABOUT) }) { Text("عن أمان والشروط والخصوصية · C19") }
+    OutlinedButton(onClick = vm::signOut, Modifier.fillMaxWidth().traceElement("C18.LOGOUT"), enabled = !state.mutationBusy) { Text("تسجيل الخروج") }
+}
+
+@Composable
+private fun AboutScreen(data: CustomerScreenData?) {
+    var section by rememberSaveable { mutableStateOf("ABOUT") }
+    val keys = listOf("ABOUT", "TERMS", "PRIVACY")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        keys.forEach { key -> TextButton(onClick = { section = key }, modifier = Modifier.weight(1f).traceElement("C19.SECTIONS.$key")) { Text(when (key) { "TERMS" -> "الشروط"; "PRIVACY" -> "الخصوصية"; else -> "ما هو أمان" }) } }
+    }
+    val row = data?.related?.array("content")?.objects()?.firstOrNull { it.optString("content_key").equals(section, true) }
+    SectionTitle(row?.optString("title").orEmpty().ifBlank { when (section) { "TERMS" -> "الشروط"; "PRIVACY" -> "الخصوصية"; else -> "ما هو أمان" } })
+    if (row == null) EmptyPanel("المحتوى المعتمد لهذا القسم غير منشور حاليًا.") else Text(row.optString("body"), Modifier.fillMaxWidth().traceElement("C19.CONTENT").padding(vertical = 8.dp))
+}
+
+@Composable
+private fun SimpleMenu(label: String, options: List<String>, selected: String, choose: (String) -> Unit, elementId: String) {
     var expanded by remember { mutableStateOf(false) }
-    val selected = options.firstOrNull { it.optString("id") == selectedId }
     Column {
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().then(if (elementId == null) Modifier else Modifier.traceElement(elementId)), enabled = options.isNotEmpty()) {
-            Text(if (selected == null) "$label · ${if (options.isEmpty()) "لا تتوفر خيارات" else "اختر"}" else display(selected), maxLines = 2, overflow = TextOverflow.Ellipsis)
+        OutlinedButton(onClick = { expanded = true }, Modifier.fillMaxWidth().traceElement(elementId)) { Text("$label: $selected") }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { choose(option); expanded = false }) }
+        }
+    }
+}
+
+@Composable
+private fun JsonItemMenu(label: String, rows: List<JSONObject>, selected: String, text: (JSONObject) -> String, choose: (JSONObject) -> Unit, elementId: String) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedRow = rows.firstOrNull { it.optString("id") == selected }
+    Column {
+        OutlinedButton(onClick = { expanded = true }, Modifier.fillMaxWidth().traceElement(elementId), enabled = rows.isNotEmpty()) {
+            Text("$label: ${selectedRow?.let(text) ?: "اختر"}", maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { item -> DropdownMenuItem(text = { Text(display(item)) }, onClick = { expanded = false; onSelected(item) }) }
+            rows.forEach { row -> DropdownMenuItem(text = { Text(text(row)) }, onClick = { choose(row); expanded = false }) }
         }
     }
 }
 
 @Composable
-private fun SimpleMenu(label: String, options: List<String>, selected: String, choose: (String) -> Unit, elementId: String? = null) {
-    var expanded by remember { mutableStateOf(false) }
-    Column {
-        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth().then(if (elementId == null) Modifier else Modifier.traceElement(elementId))) { Text("$label: $selected") }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { option -> DropdownMenuItem(text = { Text(option) }, onClick = { expanded = false; choose(option) }) }
-        }
-    }
-}
-
-@Composable
-private fun ConfirmAction(title: String, message: String, cancel: () -> Unit, confirm: () -> Unit, busy: Boolean) {
+private fun ConfirmAction(title: String, body: String, onCancel: () -> Unit, onConfirm: () -> Unit, busy: Boolean) {
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = confirm, enabled = !busy) { if (busy) CircularProgressIndicator(Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp) else Text("تأكيد") }
-                TextButton(onClick = cancel, enabled = !busy) { Text("إلغاء") }
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, fontWeight = FontWeight.Bold)
+            Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onCancel, Modifier.weight(1f), enabled = !busy) { Text("إلغاء") }
+                Button(onClick = onConfirm, Modifier.weight(1f), enabled = !busy) {
+                    if (busy) CircularProgressIndicator(Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp) else Text("تأكيد")
+                }
             }
         }
     }
 }
 
-@Composable
-private fun KeyValue(key: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(key, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(8.dp))
-        Text(value, fontWeight = FontWeight.Medium, textAlign = androidx.compose.ui.text.style.TextAlign.End)
-    }
+private fun fieldName(key: String): String = when (key) {
+    "display_phone" -> "رقم الهاتف"; "public_user_code" -> "معرّف المستخدم"; "public_purchase_code" -> "رمز الطلب"
+    "points_snapshot" -> "النقاط المطلوبة"; "price_snapshot" -> "السعر"; "points_cost_snapshot" -> "التكلفة بالنقاط"
+    "duration_days" -> "المدة بالأيام"; "start_at" -> "البداية"; "end_at" -> "الانتهاء"
+    "balance_after" -> "الرصيد بعد الحركة"; "created_at", "submitted_at", "sent_at", "added_at" -> "التاريخ"
+    "entry_type" -> "نوع الحركة"; "source_type" -> "نوع المصدر"; "status" -> "الحالة"; "description" -> "الوصف"
+    "rejection_reason" -> "سبب الرفض"; "tariff_mode_snapshot" -> "وحدة التعرفة"; "tariff_value_snapshot" -> "تعرفة الفترة"
+    else -> key.replace('_', ' ')
 }
 
-@Composable
-private fun EmptyPanel(message: String) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp)) {
-        Text(message, Modifier.fillMaxWidth().padding(15.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-    }
+private fun displayValue(value: String): String = when (value.uppercase()) {
+    "ACTIVE" -> "نشط"; "INACTIVE" -> "غير نشط"; "ARCHIVED" -> "مؤرشف"; "PENDING" -> "قيد المراجعة"
+    "APPROVED" -> "معتمد"; "REJECTED" -> "مرفوض"; "EXPIRED" -> "منتهٍ"; "OPEN" -> "مفتوح"; "CLOSED" -> "مغلق"
+    "CREDIT" -> "إضافة"; "DEBIT" -> "استخدام"; else -> formatDate(value)
 }
 
-private fun fieldName(key: String) = mapOf(
-    "status" to "الحالة", "expires_at" to "تاريخ الانتهاء", "started_at" to "تاريخ البداية", "duration_days" to "المدة بالأيام",
-    "points_per_day_snapshot" to "التعرفة وقت التفعيل", "total_points_snapshot" to "إجمالي نقاط الحماية", "points_amount_snapshot" to "النقاط المطلوبة",
-    "price_amount_snapshot" to "المبلغ", "currency_snapshot" to "العملة", "payment_method_name_snapshot" to "وسيلة الدفع", "request_number" to "رقم الطلب",
-    "submitted_at" to "تاريخ الإرسال", "reviewed_at" to "تاريخ المراجعة", "rejection_reason" to "سبب الرفض", "operation_type" to "نوع العملية",
-    "points_delta" to "تغير النقاط", "money_amount" to "المبلغ", "type" to "نوع الإشعار", "title" to "العنوان", "body" to "المحتوى",
-    "read_at" to "تاريخ القراءة", "subject" to "الموضوع", "updated_at" to "آخر تحديث", "balance_points" to "الرصيد", "amount_points" to "النقاط",
-    "balance_after" to "الرصيد بعد الحركة", "entry_type" to "نوع الحركة", "description" to "التفاصيل", "name" to "الاسم", "points_amount" to "عدد النقاط",
-    "price_amount" to "السعر", "currency" to "العملة", "instructions" to "التعليمات", "prefix" to "بادئة الشركة", "points_per_day" to "نقاط/يوم", "added_at" to "تاريخ الإضافة"
-)[key] ?: key
-private fun String.displayValue() = if (this.contains("T") && this.length > 12) displayDate() else this
-private fun String.displayDate() = replace("T", " ").substringBefore(".").removeSuffix("Z")
-private fun periodMatch(value: String, period: String): Boolean {
-    if (period == "كل الفترات") return true
-    val timestamp = runCatching { java.time.Instant.parse(value).toEpochMilli() }.getOrDefault(0L)
-    val days = if (period.contains("30")) 30 else 90
-    return timestamp >= System.currentTimeMillis() - days * 24L * 60 * 60 * 1000
-}
+private fun formatDate(value: String): String = if (value.isBlank()) "" else value.replace('T', ' ').substringBefore('.').removeSuffix("Z")

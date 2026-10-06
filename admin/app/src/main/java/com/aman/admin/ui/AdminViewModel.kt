@@ -242,10 +242,14 @@ class AdminViewModel(private val repository: AdminRepository) : ViewModel() {
             AdminFormKind.PREFIX -> mapOf("provider_id" to (row?.optString("provider_id") ?: parent).orEmpty(), "prefix" to row?.optString("prefix").orEmpty(),
                 "country_code" to row?.optString("country_code").orEmpty(), "number_length" to row?.optInt("number_length")?.takeIf { row.has("number_length") && !row.isNull("number_length") }?.toString().orEmpty(),
                 "status" to row?.optString("status").orEmpty().ifBlank { "active" })
-            AdminFormKind.TARIFF -> mapOf("provider_id" to (row?.optString("provider_id") ?: parent).orEmpty(),
-                "points_per_day" to row?.optString("points_per_day").orEmpty(),
+            AdminFormKind.TARIFF -> mapOf("provider_id" to (row?.optString("telecom_company_id")?.takeIf(String::isNotBlank) ?: row?.optString("provider_id")?.takeIf(String::isNotBlank) ?: parent).orEmpty(),
+                "tariff_mode" to row?.optString("tariff_mode").orEmpty().ifBlank { "MONTHLY" },
+                "duration_unit_days" to row?.optString("duration_unit_days").orEmpty().ifBlank { "30" },
+                "points_per_unit" to row?.optString("points_per_unit").orEmpty(),
+                "rate" to row?.optString("rate").orEmpty(), "currency" to row?.optString("currency").orEmpty(),
                 "effective_from" to row?.optString("effective_from").orEmpty().ifBlank { Instant.now().toString() },
-                "effective_to" to row?.optString("effective_to").orEmpty(), "status" to row?.optString("status").orEmpty().ifBlank { "active" })
+                "effective_to" to row?.takeIf { it.has("effective_to") && !it.isNull("effective_to") }?.optString("effective_to").orEmpty(),
+                "status" to row?.optString("status").orEmpty().lowercase().ifBlank { "active" })
             AdminFormKind.PACKAGE -> mapOf("name" to row?.optString("name").orEmpty(), "points_amount" to row?.optInt("points_amount")?.toString().orEmpty(),
                 "price_amount" to row?.optString("price_amount").orEmpty(), "currency" to row?.optString("currency").orEmpty().ifBlank { "SAR" },
                 "display_order" to row?.optInt("display_order")?.toString().orEmpty(), "status" to row?.optString("status").orEmpty().ifBlank { "active" })

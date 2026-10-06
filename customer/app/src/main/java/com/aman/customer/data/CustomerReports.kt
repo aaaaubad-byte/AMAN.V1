@@ -7,7 +7,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeParseException
 
 enum class CustomerReportCategory(val label: String) {
-    POINTS("النقاط"), PURCHASES("شراء النقاط"), PROTECTIONS("التفعيل والتمديد"), FINANCIAL("العمليات المالية"), NUMBERS("الأرقام");
+    POINTS("النقاط"), PURCHASES("المشتريات"), PROTECTION("الحماية"), NUMBERS("الأرقام"), ACTIVITY("النشاط");
 
     companion object {
         fun fromLabel(label: String): CustomerReportCategory = entries.firstOrNull { it.label == label } ?: POINTS
@@ -42,27 +42,38 @@ fun buildCustomerReportRows(
     if (!isValidCustomerReportRange(fromDate, toDate)) return emptyList()
     val rows = when (category) {
         CustomerReportCategory.POINTS -> data.related.array("ledger").objects().map { row ->
-            CustomerReportRow(row.optString("id"), category.label, row.optString("entry_type"), row.optString("created_at"), "", row.opt("amount_points").plain(), "", "", row.optString("description").ifBlank { row.optString("reference_type") })
+            val amount = row.opt("amount").plain().ifBlank { row.opt("amount_points").plain() }
+            val signed = if (row.optString("direction").equals("DEBIT", true)) "-${amount.removePrefix("-")}" else amount.removePrefix("+")
+            CustomerReportRow(row.optString("id"), category.label, row.optString("entry_type"), row.optString("created_at"), "", signed, "", "", row.optString("description"))
         }
         CustomerReportCategory.PURCHASES -> data.related.array("purchases").objects().map { row ->
-            CustomerReportRow(row.optString("id"), category.label, row.optString("request_number").ifBlank { "طلب شراء نقاط" }, row.optString("submitted_at"), row.optString("status"), row.optString("points_amount_snapshot"), row.optString("price_amount_snapshot"), row.optString("currency_snapshot"), row.optString("rejection_reason"))
+            CustomerReportRow(
+                row.optString("id"), category.label, row.optString("public_purchase_code").ifBlank { "طلب شراء نقاط" },
+                row.optString("submitted_at"), row.optString("status"), row.opt("points_snapshot").plain(),
+                row.opt("price_snapshot").plain(), row.optString("currency_snapshot"), row.optString("rejection_reason"),
+            )
         }
-        CustomerReportCategory.PROTECTIONS -> data.related.array("operations").objects()
-            .filter { it.optString("operation_type") in setOf("protection_activation", "protection_extension") }
-            .map { row ->
-                CustomerReportRow(row.optString("id"), category.label, operationArabic(row.optString("operation_type")), row.optString("created_at"), row.optString("status"), row.opt("points_delta").plain(), "", "", listOf(row.optString("phone_number_id"), row.optJSONObject("metadata")?.toString().orEmpty()).filter(String::isNotBlank).joinToString(" · "))
-            }
-        CustomerReportCategory.FINANCIAL -> data.related.array("operations").objects()
-            .filter { it.has("money_amount") && !it.isNull("money_amount") && it.optDouble("money_amount", 0.0) != 0.0 }
-            .map { row ->
-                CustomerReportRow(row.optString("id"), category.label, operationArabic(row.optString("operation_type")), row.optString("created_at"), row.optString("status"), row.opt("points_delta").plain(), row.opt("money_amount").plain(), row.optString("currency", ""), row.optJSONObject("metadata")?.toString().orEmpty())
-            }
+        CustomerReportCategory.PROTECTION -> data.related.array("protections").objects().map { row ->
+            CustomerReportRow(
+                row.optString("id"), category.label, "فترة حماية", row.optString("start_at"), row.optString("status"),
+                row.opt("points_cost_snapshot").plain(), "", row.optString("currency_snapshot"),
+                "${row.optString("display_phone")} · ${row.optString("end_at")}",
+            )
+        }
         CustomerReportCategory.NUMBERS -> data.related.array("numbers").objects().map { row ->
-            val phone = row.optJSONObject("phone_numbers")
-            CustomerReportRow(row.optString("id"), category.label, "رقم مضاف", row.optString("added_at"), row.optString("status"), "", "", "", phone?.optString("phone_e164").orEmpty().ifBlank { phone?.optString("normalized_phone").orEmpty() })
+            CustomerReportRow(
+                row.optString("id"), category.label, "رقم مرتبط", row.optString("added_at"), row.optString("status"), "", "", "",
+                row.optString("display_phone").ifBlank { row.optJSONObject("phone_number")?.optString("display_phone").orEmpty() },
+            )
+        }
+        CustomerReportCategory.ACTIVITY -> data.related.array("operations").objects().map { row ->
+            CustomerReportRow(
+                row.optString("id"), category.label, row.optString("operation_type"), row.optString("created_at"),
+                row.optString("status"), "", "", "", row.optString("entity_type") + " · " + row.optString("result_reference"),
+            )
         }
     }
-    return rows.filter { row -> inRange(row.timestamp, fromDate, toDate) }.sortedByDescending { parseInstant(it.timestamp) ?: Instant.MIN }
+    return rows.filter { inRange(it.timestamp, fromDate, toDate) }.sortedByDescending { parseInstant(it.timestamp) ?: Instant.MIN }
 }
 
 fun customerReportCsv(rows: List<CustomerReportRow>): String {
@@ -94,12 +105,4 @@ private fun inRange(timestamp: String, fromDate: String, toDate: String): Boolea
 
 private fun parseDate(value: String): LocalDate? = if (value.isBlank()) null else runCatching { LocalDate.parse(value) }.getOrNull()
 private fun parseInstant(value: String): Instant? = if (value.isBlank()) null else try { Instant.parse(value) } catch (_: DateTimeParseException) { null }
-private fun Any?.plain(): String = when (this) { null -> ""; org.json.JSONObject.NULL -> ""; else -> toString() }
-private fun operationArabic(value: String): String = when (value) {
-    "protection_activation" -> "تفعيل الحماية"
-    "protection_extension" -> "تمديد الحماية"
-    "points_purchase" -> "شراء نقاط"
-    "points_approval" -> "اعتماد شراء النقاط"
-    "points_rejection" -> "رفض شراء النقاط"
-    else -> value.ifBlank { "عملية" }
-}
+private fun Any?.plain(): String = when (this) { null -> ""; JSONObject.NULL -> ""; else -> toString() }
