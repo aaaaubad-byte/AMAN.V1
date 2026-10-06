@@ -622,6 +622,97 @@ comment on column public.protection_tariff.points_per_unit is
 comment on column public.protection_period.units_snapshot is 'Whole tariff units purchased for the original protection period.';
 comment on column public.protection_period.points_per_unit_snapshot is 'Immutable points price per unit at original activation/renewal.';
 
+-- A05 tariff administration contract. This is intentionally part of the same
+-- migration as the customer RPCs so the admin form cannot create a tariff
+-- that lacks the unit days / point price consumed by the customer app.
+create or replace function public.admin_save_provider_tariff(
+  p_id uuid,
+  p_provider_id uuid,
+  p_tariff_mode public.tariff_mode,
+  p_duration_unit_days integer,
+  p_points_per_unit bigint,
+  p_rate numeric,
+  p_currency text,
+  p_effective_from timestamptz,
+  p_effective_to timestamptz,
+  p_status text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_admin_id uuid;
+  v_tariff public.protection_tariff;
+  v_before jsonb;
+  v_operation_id uuid;
+  v_status public.generic_status;
+begin
+  if auth.uid() is null then raise exception 'AUTH_REQUIRED'; end if;
+  if not public.has_admin_permission('providers.write') then raise exception 'FORBIDDEN'; end if;
+  if p_duration_unit_days is null or p_duration_unit_days not between 1 and 36500 then raise exception 'INVALID_DURATION_UNIT_DAYS'; end if;
+  if p_points_per_unit is null or p_points_per_unit<=0 or p_points_per_unit>76861433640456465 then raise exception 'INVALID_POINTS_PER_UNIT'; end if;
+  if p_rate is null or p_rate<0 then raise exception 'INVALID_TARIFF_RATE'; end if;
+  if nullif(trim(p_currency),'') is null then raise exception 'CURRENCY_REQUIRED'; end if;
+  if p_effective_from is null or (p_effective_to is not null and p_effective_to<=p_effective_from) then raise exception 'INVALID_EFFECTIVE_RANGE'; end if;
+  v_status:=case lower(coalesce(p_status,'')) when 'active' then 'ACTIVE'::public.generic_status when 'inactive' then 'INACTIVE'::public.generic_status else null end;
+  if v_status is null then raise exception 'INVALID_TARIFF_STATUS'; end if;
+  if not exists(select 1 from public.telecom_company where id=p_provider_id) then raise exception 'PROVIDER_NOT_FOUND'; end if;
+  v_admin_id:=public.current_admin_id();
+  if v_admin_id is null then raise exception 'ADMIN_NOT_FOUND'; end if;
+
+  if p_id is null then
+    insert into public.protection_tariff(
+      telecom_company_id,tariff_mode,rate,currency,effective_from,effective_to,status,
+      duration_unit_days,points_per_unit
+    ) values (
+      p_provider_id,p_tariff_mode,p_rate,trim(p_currency),p_effective_from,p_effective_to,v_status,
+      p_duration_unit_days,p_points_per_unit
+    ) returning * into v_tariff;
+  else
+    select * into v_tariff from public.protection_tariff
+      where id=p_id and telecom_company_id=p_provider_id for update;
+    if v_tariff.id is null then raise exception 'TARIFF_NOT_FOUND'; end if;
+    v_before:=to_jsonb(v_tariff);
+    update public.protection_tariff set
+      tariff_mode=p_tariff_mode,rate=p_rate,currency=trim(p_currency),
+      effective_from=p_effective_from,effective_to=p_effective_to,status=v_status,
+      duration_unit_days=p_duration_unit_days,points_per_unit=p_points_per_unit,updated_at=now()
+      where id=v_tariff.id returning * into v_tariff;
+  end if;
+
+  insert into public.operation(operation_key,operation_type,actor_type,actor_id,entity_type,entity_id,status,result_reference,completed_at)
+    values(public.generate_public_code('OP'),'SAVE_PROTECTION_TARIFF','ADMIN',v_admin_id,'protection_tariff',v_tariff.id,'COMPLETED',v_tariff.id::text,now())
+    returning id into v_operation_id;
+  insert into public.audit_log(actor_type,actor_id,operation_id,entity_type,entity_id,action,permission_code,before_state,after_state)
+    values('ADMIN',v_admin_id,v_operation_id,'protection_tariff',v_tariff.id,
+      case when p_id is null then 'CREATE_TARIFF' else 'UPDATE_TARIFF' end,
+      'providers.write',v_before,to_jsonb(v_tariff));
+  return jsonb_build_object('tariff_id',v_tariff.id,'tariff_mode',v_tariff.tariff_mode,
+    'duration_unit_days',v_tariff.duration_unit_days,'points_per_unit',v_tariff.points_per_unit,
+    'rate',v_tariff.rate,'currency',v_tariff.currency,'status',v_tariff.status,'operation_id',v_operation_id);
+end;
+$$;
+
+-- The admin app calls this RPC using the argument key p_permission_code.
+create or replace function public.admin_has_permission(p_permission_code text)
+returns boolean
+language sql
+stable
+security definer
+set search_path=public
+as $$
+  select public.has_admin_permission(p_permission_code);
+$$;
+
+create policy telecom_company_admin_read on public.telecom_company
+  for select using (public.has_admin_permission('providers.read'));
+create policy telecom_prefix_admin_read on public.telecom_prefix
+  for select using (public.has_admin_permission('providers.read'));
+create policy protection_tariff_admin_read on public.protection_tariff
+  for select using (public.has_admin_permission('providers.read'));
+
 revoke all on function public.current_customer_profile_id() from public,anon,authenticated;
 revoke all on function public.get_customer_screen_data(text,text) from public,anon;
 revoke all on function public.get_public_content(text) from public;
@@ -635,6 +726,8 @@ revoke all on function public.mark_admin_message_read(uuid) from public,anon;
 revoke all on function public.activate_protection(uuid,uuid,integer,text) from public,anon;
 revoke all on function public.extend_protection(uuid,uuid,integer,text) from public,anon;
 revoke all on function public.renew_protection(uuid,uuid,integer,text) from public,anon;
+revoke all on function public.admin_save_provider_tariff(uuid,uuid,public.tariff_mode,integer,bigint,numeric,text,timestamptz,timestamptz,text) from public,anon;
+revoke all on function public.admin_has_permission(text) from public,anon;
 
 grant execute on function public.get_customer_screen_data(text,text) to authenticated;
 grant execute on function public.get_public_content(text) to anon,authenticated;
@@ -648,5 +741,7 @@ grant execute on function public.mark_admin_message_read(uuid) to authenticated;
 grant execute on function public.activate_protection(uuid,uuid,integer,text) to authenticated;
 grant execute on function public.extend_protection(uuid,uuid,integer,text) to authenticated;
 grant execute on function public.renew_protection(uuid,uuid,integer,text) to authenticated;
+grant execute on function public.admin_save_provider_tariff(uuid,uuid,public.tariff_mode,integer,bigint,numeric,text,timestamptz,timestamptz,text) to authenticated;
+grant execute on function public.admin_has_permission(text) to authenticated;
 
 commit;
